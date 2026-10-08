@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this workflow, cite this software and the scientific packages used by the report."
+title: "PDtoMSstats: Proteome Discoverer PSM to MSstats workflow"
+type: software
+authors:
+  - family-names: "Cormier"
+    given-names: "Kevin"
+version: 0.1.0
+date-released: 2026-10-07

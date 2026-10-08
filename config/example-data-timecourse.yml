@@ -1,0 +1,26 @@
+analysis_file: "results/example/msstats_workbook_export_objects.rds"
+
+request: "deidentified-example-timecourse"
+report_label: "De-identified PDtoMSstats time-course demonstration"
+output_dir: "results/example/timecourse"
+figures_dir: "figures/example/timecourse"
+
+time_column: "Time"
+group_column: "Group"
+reference_group: "Reference"
+comparison_group: "Treatment"
+time_unit: 24
+
+min_replicates_per_cell: 4
+
+polynomial_degree: 3
+model_fdr: 0.05
+coefficient_alpha: 0.05
+min_r_squared: 0.60
+
+min_clusters: 2
+max_clusters: 8
+cluster_diagnostic_repeats: 10
+core_membership: 0.70
+
+random_seed: 20261007

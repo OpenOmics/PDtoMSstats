@@ -1,0 +1,48 @@
+request: "deidentified-example"
+report_label: "De-identified PDtoMSstats demonstration"
+
+psm_file: "data/example/psm.csv"
+psm_sheet: 1
+annotation_file: "data/example/annotation.csv"
+annotation_sheet: 1
+
+condition_columns: ["Time", "Group"]
+condition_template: "{Time}h_{Group}"
+condition_separator: "_"
+
+output_dir: "results/example"
+figures_dir: "figures/example"
+
+contrast_strategy: "all_pairwise"
+contrasts: null
+weighted_contrasts: null
+contrast_file: "data/example/contrasts.tsv"
+excluded_runs: null
+
+# The example uses synthetic protein identifiers, so organism mapping would be
+# scientifically meaningless. Enable GSEA for real identifiers when an
+# appropriate organism annotation package is configured.
+organism_package: "org.Hs.eg.db"
+run_gsea: false
+
+filter_confidence: "High"
+remove_contaminants: true
+remove_shared_peptides: true
+remove_single_peptide_proteins: false
+remove_few_measurements: false
+normalization: "equalizeMedians"
+summary_method: "TMP"
+mb_impute: true
+number_of_cores: 2
+
+volcano_p_cutoff: 0.05
+volcano_fc_cutoff: 1
+volcano_top_labels: 10
+
+power_alpha: 0.05
+power_target: 0.80
+power_effect_log2fc: 1
+
+gsea_pvalue_cutoff: 0.05
+gsea_min_gene_set_size: 10
+gsea_max_gene_set_size: 500

@@ -1,0 +1,65 @@
+# A short, filesystem-safe name used in filenames.
+request: "example-project"
+
+# Human-readable report label.
+report_label: "Example proteomics project"
+
+# Paths are relative to the repository root.
+psm_file: "data/example-project-PSM.xlsx"
+psm_sheet: "PSMs"
+annotation_file: "data/example-project-annotation.xlsx"
+annotation_sheet: 1
+
+# Optional: create Condition from annotation columns instead of requiring a
+# pre-made Condition column. Placeholders refer to the selected column names.
+condition_columns: null
+condition_template: null
+condition_separator: "_"
+
+output_dir: "results/example-project"
+figures_dir: "figures/example-project"
+
+# Automatic comparison choices: all_pairwise or first_vs_rest.
+contrast_strategy: "all_pairwise"
+
+# Leave these null to generate comparisons from the matched annotation.
+contrasts: null
+weighted_contrasts: null
+
+# Optional CSV, TSV, or TXT file with ContrastType, Label, Condition, and Weight.
+# When supplied, it replaces contrasts and weighted_contrasts above.
+contrast_file: null
+
+# Optional list of File ID values to exclude from the analysis.
+excluded_runs: null
+
+# Human annotation and GO Biological Process GSEA are the defaults. Set
+# run_gsea to false for synthetic IDs or organisms without an installed OrgDb.
+organism_package: "org.Hs.eg.db"
+run_gsea: true
+
+# Filtering and MSstats processing.
+filter_confidence: "High"
+remove_contaminants: true
+remove_shared_peptides: true
+remove_single_peptide_proteins: false
+remove_few_measurements: false
+normalization: "equalizeMedians"
+summary_method: "TMP"
+mb_impute: true
+number_of_cores: 1
+
+# Differential-expression display thresholds.
+volcano_p_cutoff: 0.05
+volcano_fc_cutoff: 1
+volcano_top_labels: 10
+
+# Power-analysis defaults.
+power_alpha: 0.05
+power_target: 0.80
+power_effect_log2fc: 1
+
+# GSEA defaults.
+gsea_pvalue_cutoff: 0.05
+gsea_min_gene_set_size: 100
+gsea_max_gene_set_size: 500

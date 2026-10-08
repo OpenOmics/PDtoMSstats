@@ -1,0 +1,1228 @@
+---
+title: "Time-course Proteomics with maSigPro and Mfuzz"
+subtitle: "Differential progression and soft clustering from MSstats protein abundances"
+author:
+  - Kevin Cormier
+date: today
+title-block-banner: "#27445C"
+format:
+  html:
+    toc: true
+    toc-location: left
+    toc-active-border: red
+    page-layout: full
+    theme:
+      light: [cosmo, assets/offline-fonts.scss]
+      dark: [darkly, assets/offline-fonts.scss]
+    code-fold: true
+    embed-resources: true
+    smooth-scroll: true
+    fig-align: center
+    fig-width: 10
+    fig-height: 7
+execute:
+  cache: false
+  warning: false
+  message: false
+params:
+  request: "timecourse-analysis"
+  report_label: "Time-course proteomics project"
+  analysis_file: null
+  output_dir: "results/timecourse-analysis"
+  figures_dir: "figures/timecourse-analysis"
+  time_column: "Time"
+  group_column: "Group"
+  reference_group: "Reference"
+  comparison_group: "Treatment"
+  time_unit: 24
+  min_replicates_per_cell: 4
+  polynomial_degree: 3
+  model_fdr: 0.05
+  coefficient_alpha: 0.05
+  min_r_squared: 0.60
+  min_clusters: 2
+  max_clusters: 10
+  cluster_diagnostic_repeats: 20
+  core_membership: 0.70
+  random_seed: 20261007
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 7,
+  dpi = 150
+)
+
+required_packages <- c(
+  "Biobase",
+  "data.table",
+  "dplyr",
+  "DT",
+  "ggplot2",
+  "knitr",
+  "maSigPro",
+  "Mfuzz",
+  "readr",
+  "scales",
+  "tibble",
+  "tidyr",
+  "xfun"
+)
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+if (length(missing_packages)) {
+  macos_mfuzz_note <- if (
+    identical(Sys.info()[["sysname"]], "Darwin") &&
+    "Mfuzz" %in% missing_packages
+  ) {
+    paste0(
+      " On macOS, an installed Mfuzz package may still require XQuartz ",
+      "because its optional Tk interface is imported when the package loads."
+    )
+  } else {
+    ""
+  }
+  stop(
+    "Install required package(s): ",
+    paste(missing_packages, collapse = ", "),
+    ". maSigPro and Mfuzz are available from Bioconductor.",
+    macos_mfuzz_note,
+    call. = FALSE
+  )
+}
+
+suppressPackageStartupMessages({
+  library(Biobase)
+  library(data.table)
+  library(dplyr)
+  library(ggplot2)
+  library(maSigPro)
+  library(Mfuzz)
+  library(tibble)
+  library(tidyr)
+})
+
+current_input <- tryCatch(knitr::current_input(), error = function(e) NULL)
+report_dir <- if (!is.null(current_input) && nzchar(current_input)) {
+  dirname(normalizePath(current_input, winslash = "/", mustWork = TRUE))
+} else {
+  normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+}
+
+required_value <- function(value, parameter_name) {
+  if (is.null(value) || length(value) != 1L || is.na(value) || !nzchar(value)) {
+    stop("Set the ", parameter_name, " parameter before rendering.", call. = FALSE)
+  }
+  value
+}
+
+resolve_path <- function(path) {
+  path <- required_value(path, "file path")
+  if (grepl("^(/|[A-Za-z]:[/\\\\])", path)) path else file.path(report_dir, path)
+}
+
+analysis_file <- normalizePath(
+  resolve_path(required_value(params$analysis_file, "analysis_file")),
+  winslash = "/",
+  mustWork = TRUE
+)
+output_dir <- resolve_path(params$output_dir)
+figure_dir <- resolve_path(params$figures_dir)
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+
+# A relative figure path lets Pandoc embed figures even when figures_dir was
+# supplied as an absolute path.
+report_figure_dir <- xfun::relative_path(
+  normalizePath(figure_dir, winslash = "/", mustWork = TRUE),
+  dir = report_dir
+)
+knitr::opts_chunk$set(
+  fig.path = file.path(report_figure_dir, paste0(params$request, "-")),
+  dev = c("png", "pdf")
+)
+
+set.seed(as.integer(params$random_seed))
+
+write_result <- function(data, filename) {
+  path <- file.path(output_dir, filename)
+  readr::write_csv(as.data.frame(data), path, na = "")
+  normalizePath(path, winslash = "/", mustWork = TRUE)
+}
+
+extract_significant_names <- function(significant_object) {
+  profiles <- significant_object$sig.profiles
+  if (is.null(profiles) || !nrow(profiles)) character() else rownames(profiles)
+}
+
+choose_cluster_count <- function(cluster_numbers, minimum_distances, nonempty_matrix) {
+  fully_nonempty <- apply(nonempty_matrix, 2, min) == cluster_numbers
+  eligible <- which(fully_nonempty)
+  if (length(eligible) < 3L) {
+    return(cluster_numbers[max(eligible, 1L)])
+  }
+
+  x <- cluster_numbers[eligible]
+  y <- minimum_distances[eligible]
+  x_scaled <- (x - min(x)) / (max(x) - min(x))
+  y_scaled <- (y - min(y)) / (max(y) - min(y))
+  straight_line <- 1 - x_scaled
+  elbow_score <- straight_line - y_scaled
+  x[[which.max(elbow_score)]]
+}
+```
+
+```{r prepare-data, include=FALSE}
+analysis_objects <- readRDS(analysis_file)
+required_objects <- c("protein_level_data", "annotation", "analysis_settings")
+missing_objects <- setdiff(required_objects, names(analysis_objects))
+if (length(missing_objects)) {
+  stop(
+    "The analysis RDS is missing: ", paste(missing_objects, collapse = ", "),
+    call. = FALSE
+  )
+}
+
+annotation_source <- as_tibble(analysis_objects$annotation)
+required_annotation_columns <- c(
+  "Run", "BioReplicate", params$time_column, params$group_column
+)
+missing_annotation_columns <- setdiff(
+  required_annotation_columns, names(annotation_source)
+)
+if (length(missing_annotation_columns)) {
+  stop(
+    "The saved annotation is missing: ",
+    paste(missing_annotation_columns, collapse = ", "),
+    call. = FALSE
+  )
+}
+
+groups <- c(params$reference_group, params$comparison_group)
+annotation <- annotation_source |>
+  transmute(
+    Run = as.character(.data$Run),
+    Time = suppressWarnings(as.numeric(.data[[params$time_column]])),
+    Group = as.character(.data[[params$group_column]]),
+    BioReplicate = as.character(.data$BioReplicate)
+  ) |>
+  filter(.data$Group %in% groups) |>
+  mutate(Group = factor(.data$Group, levels = groups)) |>
+  arrange(.data$Time, .data$Group, .data$BioReplicate) |>
+  group_by(.data$Time, .data$Group) |>
+  mutate(Replicate = row_number()) |>
+  ungroup()
+
+if (any(!is.finite(annotation$Time))) {
+  stop("The time column must contain numeric values.", call. = FALSE)
+}
+if (anyDuplicated(annotation$Run)) {
+  stop("Each run must occur exactly once in the saved annotation.", call. = FALSE)
+}
+if (anyDuplicated(annotation$BioReplicate)) {
+  stop(
+    "This report is configured for independent samples, but BioReplicate identifiers repeat.",
+    call. = FALSE
+  )
+}
+if (!setequal(as.character(unique(annotation$Group)), groups)) {
+  stop("Both configured groups must be present in the annotation.", call. = FALSE)
+}
+
+cell_sizes <- annotation |>
+  count(.data$Time, .data$Group, name = "AvailableReplicates")
+if (any(cell_sizes$AvailableReplicates < params$min_replicates_per_cell)) {
+  stop(
+    "At least one group-time cell has fewer samples than min_replicates_per_cell.",
+    call. = FALSE
+  )
+}
+
+protein_source <- as_tibble(analysis_objects$protein_level_data)
+required_protein_columns <- c("Protein", "originalRUN", "LogIntensities")
+missing_protein_columns <- setdiff(required_protein_columns, names(protein_source))
+if (length(missing_protein_columns)) {
+  stop(
+    "The saved protein-level table is missing: ",
+    paste(missing_protein_columns, collapse = ", "),
+    call. = FALSE
+  )
+}
+
+protein_data <- protein_source |>
+  transmute(
+    Protein = as.character(.data$Protein),
+    Run = as.character(.data$originalRUN),
+    Log2Abundance = suppressWarnings(as.numeric(.data$LogIntensities))
+  ) |>
+  inner_join(annotation, by = "Run")
+
+duplicate_protein_runs <- protein_data |>
+  count(.data$Protein, .data$Run, name = "Rows") |>
+  filter(.data$Rows > 1L)
+if (nrow(duplicate_protein_runs)) {
+  stop("Protein/run rows must be unique before time-course modeling.", call. = FALSE)
+}
+
+time_values <- sort(unique(annotation$Time))
+effect_label <- paste(params$comparison_group, "-", params$reference_group)
+interaction_label <- paste0(params$comparison_group, "-by-time")
+group_time_cells <- length(time_values) * length(groups)
+coverage <- protein_data |>
+  filter(is.finite(.data$Log2Abundance)) |>
+  count(.data$Protein, .data$Time, .data$Group, name = "MeasuredReplicates") |>
+  complete(
+    Protein,
+    Time = time_values,
+    Group = factor(groups, levels = groups),
+    fill = list(MeasuredReplicates = 0L)
+  )
+
+protein_coverage <- coverage |>
+  group_by(.data$Protein) |>
+  summarise(
+    MinimumCellReplicates = min(.data$MeasuredReplicates),
+    TotalMeasurements = sum(.data$MeasuredReplicates),
+    .groups = "drop"
+  )
+
+coverage_proteins <- protein_coverage |>
+  filter(.data$MinimumCellReplicates >= params$min_replicates_per_cell) |>
+  pull(.data$Protein)
+
+sample_order <- annotation$Run
+expression_table <- protein_data |>
+  filter(.data$Protein %in% coverage_proteins) |>
+  select(.data$Protein, .data$Run, .data$Log2Abundance) |>
+  pivot_wider(names_from = .data$Run, values_from = .data$Log2Abundance)
+
+expression_matrix <- as.matrix(expression_table[, sample_order, drop = FALSE])
+storage.mode(expression_matrix) <- "double"
+rownames(expression_matrix) <- expression_table$Protein
+protein_sd <- apply(expression_matrix, 1, stats::sd, na.rm = TRUE)
+variable_proteins <- is.finite(protein_sd) & protein_sd > 0
+expression_matrix <- expression_matrix[variable_proteins, , drop = FALSE]
+
+minimum_observations <- params$min_replicates_per_cell *
+  length(time_values) * length(groups)
+
+filter_summary <- tibble(
+  Step = c(
+    "Proteins in saved MSstats protein-level data",
+    paste0(
+      "At least ", params$min_replicates_per_cell,
+      " replicates in every group-time cell"
+    ),
+    "Non-zero variation across samples"
+  ),
+  Proteins = c(
+    n_distinct(protein_data$Protein),
+    length(coverage_proteins),
+    nrow(expression_matrix)
+  )
+)
+```
+
+```{r run-masigpro, include=FALSE}
+baseline_time <- min(annotation$Time)
+scaled_time <- (annotation$Time - baseline_time) / params$time_unit
+
+experimental_design <- data.frame(
+  Time = scaled_time,
+  Replicate = annotation$Replicate,
+  row.names = annotation$Run,
+  check.names = FALSE
+)
+experimental_design[[params$reference_group]] <- as.integer(
+  annotation$Group == params$reference_group
+)
+experimental_design[[params$comparison_group]] <- as.integer(
+  annotation$Group == params$comparison_group
+)
+
+masigpro_design <- maSigPro::make.design.matrix(
+  experimental_design,
+  degree = params$polynomial_degree,
+  time.col = 1,
+  repl.col = 2,
+  group.cols = 3:4
+)
+
+masigpro_console <- capture.output(
+  masigpro_fit <- maSigPro::p.vector(
+    expression_matrix,
+    masigpro_design,
+    Q = params$model_fdr,
+    MT.adjust = "BH",
+    min.obs = minimum_observations,
+    counts = FALSE
+  )
+)
+
+tfit_console <- capture.output(
+  masigpro_tfit <- maSigPro::T.fit(
+    masigpro_fit,
+    step.method = "backward",
+    alfa = params$coefficient_alpha
+  )
+)
+
+significant_all <- maSigPro::get.siggenes(
+  masigpro_tfit,
+  rsq = params$min_r_squared,
+  vars = "all"
+)
+significant_each <- maSigPro::get.siggenes(
+  masigpro_tfit,
+  rsq = params$min_r_squared,
+  vars = "each"
+)
+significant_groups <- maSigPro::get.siggenes(
+  masigpro_tfit,
+  rsq = params$min_r_squared,
+  vars = "groups"
+)
+
+variable_significance <- bind_rows(lapply(
+  names(significant_each$sig.genes),
+  function(variable) {
+    tibble(
+      Variable = variable,
+      Protein = extract_significant_names(significant_each$sig.genes[[variable]])
+    )
+  }
+))
+
+variable_counts <- variable_significance |>
+  count(.data$Variable, name = "Proteins") |>
+  complete(
+    Variable = names(significant_each$sig.genes),
+    fill = list(Proteins = 0L)
+  )
+
+interaction_variables <- names(significant_each$sig.genes)[
+  grepl(
+    paste0("x", params$comparison_group),
+    names(significant_each$sig.genes),
+    fixed = TRUE
+  )
+]
+differential_time_proteins <- variable_significance |>
+  filter(.data$Variable %in% interaction_variables) |>
+  distinct(.data$Protein) |>
+  pull(.data$Protein)
+
+if (!length(differential_time_proteins)) {
+  stop(
+    "No proteins passed the maSigPro time-by-group interaction criteria; Mfuzz cannot proceed.",
+    call. = FALSE
+  )
+}
+
+overall_model_results <- tibble(
+  Protein = rownames(masigpro_fit$p.vector),
+  OverallModelPValue = as.numeric(masigpro_fit$p.vector[, 1]),
+  OverallModelAdjustedPValue = as.numeric(masigpro_fit$p.adjusted)
+)
+
+selected_model_results <- as.data.frame(
+  masigpro_tfit$sol,
+  check.names = FALSE
+) |>
+  rownames_to_column("Protein")
+names(selected_model_results)[2:3] <- c(
+  "StepwiseModelPValue", "ModelRSquared"
+)
+
+masigpro_results <- overall_model_results |>
+  left_join(selected_model_results, by = "Protein") |>
+  mutate(
+    PassedOverallModelFDR = .data$OverallModelAdjustedPValue <= params$model_fdr,
+    PassedRSquared = !is.na(.data$ModelRSquared) &
+      .data$ModelRSquared >= params$min_r_squared,
+    DifferentialTimeInteraction = .data$Protein %in% differential_time_proteins
+  ) |>
+  arrange(
+    desc(.data$DifferentialTimeInteraction),
+    .data$OverallModelAdjustedPValue,
+    desc(.data$ModelRSquared)
+  )
+
+group_counts <- tibble(
+  GroupComponent = names(significant_groups$sig.genes),
+  Proteins = vapply(
+    significant_groups$sig.genes,
+    function(x) length(extract_significant_names(x)),
+    integer(1)
+  )
+)
+```
+
+```{r run-mfuzz, include=FALSE}
+condition_summary <- protein_data |>
+  filter(
+    .data$Protein %in% differential_time_proteins,
+    is.finite(.data$Log2Abundance)
+  ) |>
+  group_by(.data$Protein, .data$Time, .data$Group) |>
+  summarise(
+    MeanLog2Abundance = mean(.data$Log2Abundance),
+    SDLog2Abundance = stats::sd(.data$Log2Abundance),
+    Replicates = n(),
+    SELog2Abundance = .data$SDLog2Abundance / sqrt(.data$Replicates),
+    .groups = "drop"
+  )
+
+effect_long <- condition_summary |>
+  select(.data$Protein, .data$Time, .data$Group, .data$MeanLog2Abundance) |>
+  pivot_wider(names_from = .data$Group, values_from = .data$MeanLog2Abundance) |>
+  mutate(
+    Effect = .data[[params$comparison_group]] -
+      .data[[params$reference_group]]
+  )
+
+effect_table <- effect_long |>
+  select(.data$Protein, .data$Time, .data$Effect) |>
+  pivot_wider(names_from = .data$Time, values_from = .data$Effect)
+time_columns <- as.character(time_values)
+effect_matrix <- as.matrix(effect_table[, time_columns, drop = FALSE])
+storage.mode(effect_matrix) <- "double"
+rownames(effect_matrix) <- effect_table$Protein
+
+if (any(!is.finite(effect_matrix))) {
+  stop(
+    "The balanced coverage filter should produce complete condition means, but missing effects remain.",
+    call. = FALSE
+  )
+}
+
+effect_eset <- Biobase::ExpressionSet(
+  assayData = effect_matrix,
+  phenoData = Biobase::AnnotatedDataFrame(data.frame(
+    Time = time_values,
+    row.names = time_columns
+  ))
+)
+
+# No values should be removed here; these calls make the Mfuzz preprocessing
+# explicit and guard against unexpected missing or constant effect profiles.
+mfuzz_filter_log <- capture.output(
+  effect_eset <- Mfuzz::filter.NA(effect_eset, thres = 0)
+)
+mfuzz_sd_log <- capture.output(
+  effect_eset <- Mfuzz::filter.std(effect_eset, min.std = 0, visu = FALSE)
+)
+standardized_eset <- Mfuzz::standardise(effect_eset)
+fuzzifier <- Mfuzz::mestimate(standardized_eset)
+
+maximum_candidate <- min(
+  as.integer(params$max_clusters),
+  nrow(Biobase::exprs(standardized_eset)) - 1L
+)
+cluster_candidates <- seq.int(
+  as.integer(params$min_clusters),
+  maximum_candidate
+)
+if (length(cluster_candidates) < 2L) {
+  stop("At least two candidate cluster counts are required.", call. = FALSE)
+}
+
+set.seed(as.integer(params$random_seed))
+minimum_centroid_distance <- Mfuzz::Dmin(
+  standardized_eset,
+  m = fuzzifier,
+  crange = cluster_candidates,
+  repeats = as.integer(params$cluster_diagnostic_repeats),
+  visu = FALSE
+)
+set.seed(as.integer(params$random_seed))
+nonempty_clusters <- Mfuzz::cselection(
+  standardized_eset,
+  m = fuzzifier,
+  crange = cluster_candidates,
+  repeats = as.integer(params$cluster_diagnostic_repeats),
+  visu = FALSE
+)
+
+chosen_clusters <- choose_cluster_count(
+  cluster_candidates,
+  minimum_centroid_distance,
+  nonempty_clusters
+)
+
+set.seed(as.integer(params$random_seed))
+mfuzz_fit <- Mfuzz::mfuzz(
+  standardized_eset,
+  centers = chosen_clusters,
+  m = fuzzifier,
+  iter.max = 1000
+)
+
+membership_table <- as.data.frame(mfuzz_fit$membership) |>
+  rownames_to_column("Protein")
+names(membership_table)[-1] <- paste0(
+  "MembershipCluster", seq_len(chosen_clusters)
+)
+membership_matrix <- as.matrix(membership_table[, -1, drop = FALSE])
+
+cluster_assignments <- membership_table |>
+  mutate(
+    Cluster = as.integer(mfuzz_fit$cluster),
+    MaximumMembership = apply(membership_matrix, 1, max),
+    CoreMember = .data$MaximumMembership >= params$core_membership
+  ) |>
+  relocate(
+    .data$Protein, .data$Cluster, .data$MaximumMembership,
+    .data$CoreMember
+  )
+
+centroid_table <- as.data.frame(mfuzz_fit$centers) |>
+  rownames_to_column("Cluster") |>
+  mutate(Cluster = as.integer(.data$Cluster))
+names(centroid_table)[-1] <- paste0("Time", time_values)
+
+cluster_diagnostics <- tibble(
+  CandidateClusters = cluster_candidates,
+  MinimumCentroidDistance = minimum_centroid_distance,
+  MedianNonemptyClusters = apply(nonempty_clusters, 2, stats::median),
+  MinimumNonemptyClusters = apply(nonempty_clusters, 2, min),
+  MaximumNonemptyClusters = apply(nonempty_clusters, 2, max),
+  Selected = cluster_candidates == chosen_clusters
+)
+
+cluster_summary <- cluster_assignments |>
+  group_by(.data$Cluster) |>
+  summarise(
+    Proteins = n(),
+    CoreProteins = sum(.data$CoreMember),
+    MedianMaximumMembership = stats::median(.data$MaximumMembership),
+    .groups = "drop"
+  ) |>
+  left_join(
+    effect_long |>
+      inner_join(
+        cluster_assignments |>
+          select(.data$Protein, .data$Cluster),
+        by = "Protein"
+      ) |>
+      group_by(.data$Cluster, .data$Time) |>
+      summarise(MedianEffect = stats::median(.data$Effect), .groups = "drop") |>
+      group_by(.data$Cluster) |>
+      summarise(
+        PeakPositiveTime = .data$Time[which.max(.data$MedianEffect)],
+        PeakNegativeTime = .data$Time[which.min(.data$MedianEffect)],
+        EarlyMedianEffect = .data$MedianEffect[which.min(.data$Time)],
+        LateMedianEffect = .data$MedianEffect[which.max(.data$Time)],
+        .groups = "drop"
+      ),
+    by = "Cluster"
+  )
+```
+
+```{r save-results, include=FALSE}
+filter_file <- write_result(protein_coverage, "timecourse_protein_coverage.csv")
+design_file <- write_result(
+  rownames_to_column(as.data.frame(masigpro_design$dis), "Run"),
+  "masigpro_design_matrix.csv"
+)
+model_file <- write_result(masigpro_results, "masigpro_model_results.csv")
+variable_file <- write_result(
+  variable_significance,
+  "masigpro_significant_proteins_by_variable.csv"
+)
+condition_file <- write_result(
+  condition_summary,
+  "timecourse_condition_means.csv"
+)
+effect_file <- write_result(effect_long, "timecourse_group_difference_effects.csv")
+membership_file <- write_result(
+  cluster_assignments,
+  "mfuzz_cluster_membership.csv"
+)
+centroid_file <- write_result(centroid_table, "mfuzz_cluster_centroids.csv")
+cluster_summary_file <- write_result(
+  cluster_summary,
+  "mfuzz_cluster_summary.csv"
+)
+diagnostic_file <- write_result(
+  cluster_diagnostics,
+  "mfuzz_cluster_number_diagnostics.csv"
+)
+
+saveRDS(
+  list(
+    filtering = list(
+      coverage = protein_coverage,
+      retained_proteins = rownames(expression_matrix),
+      minimum_replicates_per_cell = params$min_replicates_per_cell
+    ),
+    maSigPro = list(
+      experimental_design = experimental_design,
+      regression_design = masigpro_design,
+      p_vector = masigpro_fit,
+      t_fit = masigpro_tfit,
+      significant_by_variable = variable_significance,
+      differential_time_proteins = differential_time_proteins
+    ),
+    Mfuzz = list(
+      effect_expression_set = effect_eset,
+      standardized_expression_set = standardized_eset,
+      fuzzifier = fuzzifier,
+      cluster_diagnostics = cluster_diagnostics,
+      selected_clusters = chosen_clusters,
+      fit = mfuzz_fit,
+      assignments = cluster_assignments
+    ),
+    parameters = params
+  ),
+  file.path(output_dir, "timecourse_masigpro_mfuzz_objects.rds")
+)
+```
+
+# Analysis overview
+
+This report analyzes **`r params$report_label`** using the normalized
+protein-level log2 abundances saved by the preceding MSstats report.
+
+The design contains `r nrow(annotation)` independent samples, `r length(time_values)`
+time points (`r paste(time_values, collapse = ", ")` hours), and two groups:
+`r params$reference_group` and `r params$comparison_group`. Each group-time
+cell contains `r paste(sort(unique(cell_sizes$AvailableReplicates)), collapse = ", ")`
+biological replicates.
+
+The two analyses answer different questions:
+
+- **maSigPro** performs formal regression tests for time-related protein
+  patterns and differences between the `r params$comparison_group` and `r
+  params$reference_group` trajectories.
+- **Mfuzz** performs exploratory soft clustering of the time-dependent `r
+  effect_label` effect among proteins selected by maSigPro. Membership values
+  describe how strongly each protein follows a cluster pattern.
+
+# Detailed methods
+
+## Source values and experimental unit
+
+The input is `r basename(analysis_file)`, created by the MSstats report. The
+`ProteinLevelData` values had already been log2 transformed, normalized by
+`r analysis_objects$analysis_settings$normalization`, summarized with
+`r analysis_objects$analysis_settings$summary_method`, and processed with
+MSstats model-based imputation set to
+`r analysis_objects$analysis_settings$model_based_imputation`.
+
+No PSM-level values were reprocessed here. A row represents one protein in one
+run. `BioReplicate` identifiers are unique across all runs, so samples are
+independent rather than repeated measurements of the same subject.
+
+## Coverage filtering
+
+Time-course models can be driven by uneven missingness if a protein is abundant
+in only one group or one part of the experiment. A protein was therefore
+required to have a finite MSstats protein abundance in at least
+`r params$min_replicates_per_cell` biological replicates in **every** one of the
+`r group_time_cells` group-time cells. This per-cell coverage rule is stricter
+than an overall missing-value threshold. Proteins with zero variance across all
+samples were also removed.
+
+No additional sample-level values were imputed for maSigPro. Its Gaussian
+regressions used the observed finite values and required at least
+`r minimum_observations` observations per protein.
+
+## maSigPro regression
+
+[maSigPro](https://bioconductor.org/packages/maSigPro) is a regression-based
+method for detecting significant time-course profiles and differences among
+experimental groups. The input was the filtered, normalized log2 protein matrix
+with proteins in rows and independent samples in columns.
+
+Time was expressed as
+
+\[
+t = \frac{\text{hour} - `r baseline_time`}{`r params$time_unit`},
+\]
+
+so the intercept corresponds to `r baseline_time` hours and one time unit is
+`r params$time_unit` hours. Scaling improves numerical stability without
+changing the fitted curves.
+
+A degree-`r params$polynomial_degree` polynomial was used. With `r
+length(time_values)` time points, this model can represent broad monotonic and
+curved responses without fitting a separate parameter for every time point.
+With `r params$reference_group` as the reference, the model is conceptually
+
+\[
+y = \beta_0 + \beta_G G +
+\sum_{k=1}^{`r params$polynomial_degree`} \beta_k t^k +
+\sum_{k=1}^{`r params$polynomial_degree`} \gamma_k(Gt^k) + \epsilon,
+\]
+
+where \(G=1\) for `r params$comparison_group` and 0 for `r
+params$reference_group`. The \(\gamma_k\) interaction terms test whether the
+`r params$comparison_group` trajectory differs from `r params$reference_group`
+over time.
+
+`p.vector()` first compared the full model with an intercept-only model using a
+Gaussian F test. P-values were adjusted across proteins with Benjamini-Hochberg
+and the FDR threshold was `r params$model_fdr`. `T.fit()` then used backward
+variable selection with coefficient threshold `r params$coefficient_alpha`.
+`get.siggenes()` retained models with \(R^2 \ge `r params$min_r_squared`\).
+
+The set passed to Mfuzz was deliberately narrower than the overall maSigPro
+set: a protein had to be selected for at least one `r interaction_label`
+interaction (`r paste(interaction_variables, collapse = ", ")`). A significant
+constant group offset without a time interaction was not considered
+differential progression.
+
+## Mfuzz soft clustering
+
+[Mfuzz](https://bioconductor.org/packages/Mfuzz) uses fuzzy c-means clustering.
+The package documentation recommends averaging replicates before clustering;
+therefore, observed log2 abundances were averaged within each group-time cell.
+For every maSigPro interaction protein, the clustering profile was
+
+\[
+\Delta_t = \overline{y}_{\text{comparison},t} -
+           \overline{y}_{\text{reference},t}
+\]
+
+at the `r length(time_values)` time points. Thus, the clusters describe the
+*shape of the `r effect_label` effect over time*, not merely abundance over time
+in either group.
+
+The balanced coverage filter guaranteed complete group means, so `fill.NA()`
+was not used. `filter.NA(thres = 0)` and `filter.std(min.std = 0)` were retained
+as safeguards. `standardise()` transformed each effect profile to mean zero and
+standard deviation one because Mfuzz uses Euclidean distance. Standardization
+affects cluster shape but not the log2-effect values reported in the tables.
+
+The fuzzifier was estimated from the data with `mestimate()` and equaled
+`r round(fuzzifier, 3)`. Candidate cluster counts from
+`r min(cluster_candidates)` through `r max(cluster_candidates)` were evaluated
+with `Dmin()` and `cselection()` using
+`r params$cluster_diagnostic_repeats` repeated starts. Counts that ever produced
+an empty cluster were excluded. Among the remaining counts, the selected value
+was the elbow with the largest distance below the straight line joining the
+first and last minimum-centroid-distance values. This selected
+**`r chosen_clusters` clusters**. The final clustering used a fixed seed and up
+to 1,000 iterations.
+
+Proteins were assigned to their highest-membership cluster for summaries, but
+all membership values are exported. A core member has maximum membership at
+least `r params$core_membership`; this threshold is descriptive rather than a
+significance test.
+
+## Interpretation limits
+
+- maSigPro assumes independent residuals here; it is not a repeated-measures
+  model.
+- Cubic polynomials summarize broad trajectories and should not be interpreted
+  as mechanistic kinetic models.
+- The source values include MSstats feature-level model-based imputation. The
+  per-cell coverage filter reduces, but does not eliminate, dependence on that
+  earlier processing.
+- Backward variable selection and the interaction labels identify candidate
+  trajectory differences; important proteins should be inspected in the raw
+  replicate plots.
+- Mfuzz clusters and memberships are exploratory. Cluster membership does not
+  supply a p-value or prove a biological pathway.
+
+# Filtering results
+
+```{r filtering-table}
+filter_summary |>
+  knitr::kable(
+    caption = "Protein counts after each time-course filtering step."
+  )
+```
+
+```{r coverage-distribution, fig.height=5, fig.cap="Minimum number of observed biological replicates across all group-time cells for each protein."}
+protein_coverage |>
+  count(.data$MinimumCellReplicates, name = "Proteins") |>
+  ggplot(aes(x = factor(.data$MinimumCellReplicates), y = .data$Proteins)) +
+  geom_col(fill = "#4C72B0") +
+  geom_vline(
+    xintercept = params$min_replicates_per_cell + 0.5,
+    linetype = "dashed",
+    color = "#C44E52"
+  ) +
+  labs(
+    x = "Minimum replicates observed in any group-time cell",
+    y = "Proteins",
+    title = "Balanced coverage filtering"
+  ) +
+  theme_bw()
+```
+
+# maSigPro results
+
+The overall model identified **`r masigpro_fit$i` proteins** at BH-adjusted
+FDR `r params$model_fdr`. After backward variable selection and the
+\(R^2\) threshold, **`r significant_all$sig.genes$g` proteins** retained an
+adequate fitted trajectory. At least one `r interaction_label` interaction was selected
+for **`r length(differential_time_proteins)` proteins**; these were carried into
+Mfuzz.
+
+```{r masigpro-design}
+knitr::kable(
+  head(rownames_to_column(as.data.frame(masigpro_design$dis), "Run"), 12),
+  digits = 3,
+  caption = "First 12 rows of the maSigPro regression design matrix."
+)
+```
+
+```{r masigpro-variable-counts, fig.height=6, fig.cap="Numbers of proteins selected for each maSigPro model term after the R-squared filter."}
+variable_counts |>
+  mutate(Variable = reorder(.data$Variable, .data$Proteins)) |>
+  ggplot(aes(x = .data$Variable, y = .data$Proteins)) +
+  geom_col(fill = "#4C72B0") +
+  coord_flip() +
+  labs(
+    x = "Model term",
+    y = "Selected proteins",
+    title = "maSigPro variable-selection results"
+  ) +
+  theme_bw()
+```
+
+```{r masigpro-group-counts}
+group_counts |>
+  knitr::kable(
+    caption = "Proteins assigned to each maSigPro group-level component."
+  )
+```
+
+```{r top-interaction-trajectories, fig.height=11, fig.cap="Observed normalized protein abundances for the highest-R-squared proteins with a group-by-time interaction. Points are independent biological samples; lines connect group-time means."}
+top_interaction_proteins <- masigpro_results |>
+  filter(.data$DifferentialTimeInteraction) |>
+  arrange(desc(.data$ModelRSquared), .data$OverallModelAdjustedPValue) |>
+  slice_head(n = 12) |>
+  pull(.data$Protein)
+
+protein_data |>
+  filter(.data$Protein %in% top_interaction_proteins) |>
+  mutate(
+    Protein = factor(.data$Protein, levels = top_interaction_proteins),
+    Group = factor(.data$Group, levels = groups)
+  ) |>
+  ggplot(aes(x = .data$Time, y = .data$Log2Abundance, color = .data$Group)) +
+  geom_point(alpha = 0.55, size = 1.2, position = position_jitter(width = 1.2)) +
+  stat_summary(aes(group = .data$Group), fun = mean, geom = "line", linewidth = 0.8) +
+  stat_summary(aes(group = .data$Group), fun = mean, geom = "point", size = 2) +
+  facet_wrap(~ Protein, scales = "free_y", ncol = 3) +
+  scale_color_manual(values = c("#4C72B0", "#C44E52")) +
+  labs(
+    x = "Time (hours)",
+    y = "MSstats normalized log2 abundance",
+    color = NULL,
+    title = "Top differential time-course proteins"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+```{r masigpro-results-table}
+DT::datatable(
+  masigpro_results |>
+    filter(.data$DifferentialTimeInteraction) |>
+    select(
+      .data$Protein,
+      .data$OverallModelAdjustedPValue,
+      .data$ModelRSquared,
+      .data$DifferentialTimeInteraction
+    ),
+  rownames = FALSE,
+  filter = "top",
+  extensions = "Buttons",
+  options = list(
+    pageLength = 15,
+    scrollX = TRUE,
+    dom = "Bfrtip",
+    buttons = c("copy", "csv")
+  ),
+  caption = "Proteins with at least one selected comparison-group-by-time interaction."
+)
+```
+
+# Mfuzz results
+
+## Cluster-number diagnostics
+
+```{r mfuzz-dmin, fig.height=5, fig.cap="Mfuzz minimum centroid distance across candidate cluster counts. The selected elbow is marked in red."}
+cluster_diagnostics |>
+  ggplot(aes(
+    x = .data$CandidateClusters,
+    y = .data$MinimumCentroidDistance
+  )) +
+  geom_line(color = "#4C72B0", linewidth = 0.8) +
+  geom_point(color = "#4C72B0", size = 2) +
+  geom_vline(
+    xintercept = chosen_clusters,
+    color = "#C44E52",
+    linetype = "dashed"
+  ) +
+  scale_x_continuous(breaks = cluster_candidates) +
+  labs(
+    x = "Candidate clusters",
+    y = "Minimum centroid distance",
+    title = paste("Dmin elbow selected", chosen_clusters, "clusters")
+  ) +
+  theme_bw()
+```
+
+```{r mfuzz-nonempty, fig.height=5, fig.cap="Mfuzz cselection diagnostic. All selected candidate clusters should remain non-empty over repeated starts."}
+cluster_diagnostics |>
+  ggplot(aes(
+    x = .data$CandidateClusters,
+    y = .data$MedianNonemptyClusters
+  )) +
+  geom_ribbon(aes(
+    ymin = .data$MinimumNonemptyClusters,
+    ymax = .data$MaximumNonemptyClusters
+  ), fill = "#A7CDF0", alpha = 0.5) +
+  geom_line(color = "#4C72B0", linewidth = 0.8) +
+  geom_point(color = "#4C72B0", size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  scale_x_continuous(breaks = cluster_candidates) +
+  scale_y_continuous(breaks = cluster_candidates) +
+  labs(
+    x = "Requested clusters",
+    y = "Non-empty clusters",
+    title = "Cluster stability across repeated starts"
+  ) +
+  theme_bw()
+```
+
+## Cluster summaries
+
+```{r mfuzz-cluster-summary}
+cluster_summary |>
+  mutate(
+    MedianMaximumMembership = round(.data$MedianMaximumMembership, 3),
+    EarlyMedianEffect = round(.data$EarlyMedianEffect, 3),
+    LateMedianEffect = round(.data$LateMedianEffect, 3)
+  ) |>
+  knitr::kable(
+    caption = paste0(
+      "Mfuzz cluster summary. Core proteins have membership >= ",
+      params$core_membership, "."
+    )
+  )
+```
+
+```{r mfuzz-standardized-profiles, fig.height=10, fig.cap="Standardized comparison-minus-reference protein effects used for Mfuzz clustering. Darker lines have higher membership in their assigned cluster; black lines are cluster centroids."}
+standardized_profiles <- as.data.frame(Biobase::exprs(standardized_eset)) |>
+  rownames_to_column("Protein") |>
+  pivot_longer(
+    cols = -Protein,
+    names_to = "Time",
+    values_to = "StandardizedEffect"
+  ) |>
+  mutate(Time = as.numeric(.data$Time)) |>
+  inner_join(
+    cluster_assignments |>
+      select(.data$Protein, .data$Cluster, .data$MaximumMembership),
+    by = "Protein"
+  )
+
+centroid_long <- centroid_table |>
+  pivot_longer(
+    cols = starts_with("Time"),
+    names_to = "Time",
+    values_to = "StandardizedEffect"
+  ) |>
+  mutate(Time = as.numeric(sub("^Time", "", .data$Time)))
+
+ggplot(
+  standardized_profiles,
+  aes(
+    x = .data$Time,
+    y = .data$StandardizedEffect,
+    group = .data$Protein,
+    color = .data$MaximumMembership
+  )
+) +
+  geom_line(alpha = 0.18, linewidth = 0.35) +
+  geom_line(
+    data = centroid_long,
+    aes(
+      x = .data$Time,
+      y = .data$StandardizedEffect,
+      group = .data$Cluster
+    ),
+    inherit.aes = FALSE,
+    color = "black",
+    linewidth = 1.2
+  ) +
+  geom_point(
+    data = centroid_long,
+    aes(
+      x = .data$Time,
+      y = .data$StandardizedEffect,
+      group = .data$Cluster
+    ),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 1.8
+  ) +
+  facet_wrap(~ Cluster, ncol = 2) +
+  scale_color_gradient(low = "#D9EAF7", high = "#C44E52") +
+  labs(
+    x = "Time (hours)",
+    y = paste("Standardized", effect_label, "effect"),
+    color = "Membership",
+    title = "Mfuzz differential-effect profiles"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+```{r mfuzz-effects-log2, fig.height=9, fig.cap="Median comparison-minus-reference log2 effects and interquartile ranges within each assigned cluster. These are unstandardized effect sizes."}
+effect_cluster_summary <- effect_long |>
+  inner_join(
+    cluster_assignments |>
+      select(.data$Protein, .data$Cluster),
+    by = "Protein"
+  ) |>
+  group_by(.data$Cluster, .data$Time) |>
+  summarise(
+    MedianEffect = stats::median(.data$Effect),
+    LowerQuartile = stats::quantile(.data$Effect, 0.25),
+    UpperQuartile = stats::quantile(.data$Effect, 0.75),
+    .groups = "drop"
+  )
+
+ggplot(
+  effect_cluster_summary,
+  aes(x = .data$Time, y = .data$MedianEffect)
+) +
+  geom_hline(yintercept = 0, color = "grey55", linetype = "dotted") +
+  geom_ribbon(
+    aes(ymin = .data$LowerQuartile, ymax = .data$UpperQuartile),
+    fill = "#A7CDF0",
+    alpha = 0.55
+  ) +
+  geom_line(color = "#27445C", linewidth = 1) +
+  geom_point(color = "#27445C", size = 2) +
+  facet_wrap(~ Cluster, ncol = 2, scales = "free_y") +
+  labs(
+    x = "Time (hours)",
+    y = paste(effect_label, "log2 abundance"),
+    title = "Unstandardized comparison-effect trajectories"
+  ) +
+  theme_bw()
+```
+
+```{r mfuzz-group-means, fig.height=9, fig.cap="Median normalized protein abundances for the reference and comparison groups within each Mfuzz cluster. Ribbons show interquartile ranges across proteins."}
+group_cluster_summary <- condition_summary |>
+  inner_join(
+    cluster_assignments |>
+      select(.data$Protein, .data$Cluster),
+    by = "Protein"
+  ) |>
+  group_by(.data$Cluster, .data$Time, .data$Group) |>
+  summarise(
+    MedianAbundance = stats::median(.data$MeanLog2Abundance),
+    LowerQuartile = stats::quantile(.data$MeanLog2Abundance, 0.25),
+    UpperQuartile = stats::quantile(.data$MeanLog2Abundance, 0.75),
+    .groups = "drop"
+  )
+
+ggplot(
+  group_cluster_summary,
+  aes(
+    x = .data$Time,
+    y = .data$MedianAbundance,
+    color = .data$Group,
+    fill = .data$Group
+  )
+) +
+  geom_ribbon(
+    aes(ymin = .data$LowerQuartile, ymax = .data$UpperQuartile),
+    alpha = 0.15,
+    color = NA
+  ) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ Cluster, ncol = 2, scales = "free_y") +
+  scale_color_manual(values = c("#4C72B0", "#C44E52")) +
+  scale_fill_manual(values = c("#4C72B0", "#C44E52")) +
+  labs(
+    x = "Time (hours)",
+    y = "Median normalized log2 abundance",
+    color = NULL,
+    fill = NULL,
+    title = paste(params$reference_group, "and", params$comparison_group,
+                  "profiles underlying each effect cluster")
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+```{r mfuzz-core-table}
+DT::datatable(
+  cluster_assignments |>
+    filter(.data$CoreMember) |>
+    arrange(.data$Cluster, desc(.data$MaximumMembership)),
+  rownames = FALSE,
+  filter = "top",
+  extensions = "Buttons",
+  options = list(
+    pageLength = 15,
+    scrollX = TRUE,
+    dom = "Bfrtip",
+    buttons = c("copy", "csv")
+  ),
+  caption = paste0(
+    "Mfuzz core proteins with maximum membership >= ",
+    params$core_membership, "."
+  )
+)
+```
+
+# Output files
+
+The complete tables are saved separately from the HTML report:
+
+```{r output-files}
+tibble(
+  File = basename(c(
+    filter_file,
+    design_file,
+    model_file,
+    variable_file,
+    condition_file,
+    effect_file,
+    membership_file,
+    centroid_file,
+    cluster_summary_file,
+    diagnostic_file,
+    file.path(output_dir, "timecourse_masigpro_mfuzz_objects.rds")
+  )),
+  Contents = c(
+    "Coverage statistics for every protein",
+    "Regression design submitted to maSigPro",
+    "Overall and stepwise maSigPro model results",
+    "Proteins selected for each maSigPro model term",
+    "Observed group-time means and uncertainty",
+    "Comparison-minus-reference effects used for clustering",
+    "All Mfuzz memberships and assigned clusters",
+    "Standardized Mfuzz cluster centroids",
+    "Cluster sizes, core counts, and effect summaries",
+    "Dmin and non-empty-cluster diagnostics",
+    "Saved filtering, maSigPro, Mfuzz, and parameter objects"
+  )
+) |>
+  knitr::kable(caption = "Machine-readable time-course analysis outputs.")
+```
+
+# Reproducibility
+
+```{r session-info}
+sessionInfo()
+```

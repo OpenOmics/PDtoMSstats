@@ -1,0 +1,17 @@
+services:
+  pdtomsstats:
+    build:
+      context: .
+      args:
+        R_VERSION: "4.5.2"
+        QUARTO_VERSION: "1.8.26"
+    image: pdtomsstats:0.1.0
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      HOME: /tmp
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+    command: Rscript scripts/check_environment.R

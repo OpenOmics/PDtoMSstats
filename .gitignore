@@ -1,0 +1,32 @@
+.DS_Store
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+.quarto/
+**/.quarto/
+*_cache/
+*_files/
+
+# Project data and generated analysis products
+data/*
+!data/README.md
+!data/example/
+!data/example/**
+results/*
+!results/.gitkeep
+figures/*
+!figures/.gitkeep
+
+# Local configurations and rendered reports
+config/local-*.yml
+config/local-*.yaml
+*.html
+*.xlsx
+*.xls
+*.rds
+*.log
+
+# renv local library, if renv is enabled later
+renv/library/
+renv/staging/
