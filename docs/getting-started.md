@@ -336,3 +336,6 @@ When reporting a problem, include:
 - the PSM and annotation worksheet and column names.
 
 Never post identifiable or unpublished project data in a public GitHub issue.
+
+For an HPC system that provides SingularityCE or Apptainer instead of Docker,
+see the [HPC guide](hpc-singularity.md).

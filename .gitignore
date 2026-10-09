@@ -5,6 +5,8 @@
 .Rproj.user/
 .quarto/
 **/.quarto/
+**/*.quarto_ipynb
+docs/_site/
 *_cache/
 *_files/
 

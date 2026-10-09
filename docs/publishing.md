@@ -140,6 +140,27 @@ Open **Releases > Draft a new release**, select the version tag, and summarize:
 Use `CHANGELOG.md` as the source for release notes. Do not attach private input
 or output files.
 
+## 8. Enable the documentation website
+
+The repository contains a Quarto documentation website under `docs` and a
+`Deploy documentation to GitHub Pages` workflow. One repository administrator
+must complete the initial GitHub Pages setup:
+
+1. Open **Settings > Pages**.
+2. Under **Build and deployment**, select **GitHub Actions** as the source.
+3. Open the **Actions** tab and run **Deploy documentation to GitHub Pages**, or
+   push a documentation change to `main`.
+4. Confirm the deployment at
+   `https://openomics.github.io/PDtoMSstats/`.
+
+The workflow renders the Markdown files with Quarto and deploys only the
+generated static site. `docs/_site` is ignored by Git.
+
+GitHub Pages availability and access controls for a private organization
+repository depend on the organization's GitHub plan and policy. Treat the
+website as potentially public: never place project data, sample identifiers,
+credentials, unpublished results, or internal-only instructions under `docs`.
+
 ## Updating the repository
 
 For later changes:

@@ -1,0 +1,59 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: PDtoMSstats
+  description: Portable Proteome Discoverer PSM analysis with MSstats
+  site-url: https://openomics.github.io/PDtoMSstats/
+  repo-url: https://github.com/OpenOmics/PDtoMSstats
+  repo-actions: [edit, issue]
+  page-navigation: true
+  search: true
+  navbar:
+    left:
+      - href: index.md
+        text: Home
+      - href: getting-started.md
+        text: Getting started
+      - href: hpc-singularity.md
+        text: HPC
+      - href: configuration.md
+        text: Configuration
+    right:
+      - icon: github
+        href: https://github.com/OpenOmics/PDtoMSstats
+        aria-label: GitHub repository
+  sidebar:
+    style: docked
+    contents:
+      - index.md
+      - section: Start here
+        contents:
+          - getting-started.md
+          - example.md
+          - input-files.md
+      - section: Running the workflow
+        contents:
+          - docker.md
+          - hpc-singularity.md
+          - configuration.md
+          - installation.md
+      - section: Optional analyses and outputs
+        contents:
+          - workbook-export.md
+          - timecourse.md
+      - section: Maintainers
+        contents:
+          - publishing.md
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-copy: true
+    code-overflow: wrap
+    link-external-newwindow: true
+
+execute:
+  freeze: true

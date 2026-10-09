@@ -80,6 +80,102 @@ only to verify the software.
 See [Docker instructions](docs/docker.md) and the
 [example walkthrough](docs/example.md) for Windows, macOS, and Linux details.
 
+## HPC with Singularity or Apptainer
+
+The same published container can run on an HPC system without Docker. No R
+analysis code changes are required. If the site provides `apptainer` rather
+than `singularity`, replace the command name below; the arguments are the same.
+
+Pull the released container once, normally on a login or transfer node with
+internet access:
+
+```bash
+module load singularity
+mkdir -p containers
+singularity pull containers/pdtomsstats_0.1.0.sif \
+  docker://ghcr.io/openomics/pdtomsstats:0.1.0
+```
+
+For a private GitHub Container Registry package, first use
+`singularity registry login --username YOUR_GITHUB_USERNAME docker://ghcr.io`
+and enter a GitHub token with `read:packages` permission. Never put the token
+in a job script.
+
+### Interactive compute node
+
+Request an interactive compute allocation according to local policy. For a
+Slurm cluster, a typical request is:
+
+```bash
+srun --pty --cpus-per-task=2 --mem=32G --time=04:00:00 bash
+```
+
+From the PDtoMSstats repository root on the allocated node, run the main
+MSstats stage:
+
+```bash
+singularity exec \
+  --cleanenv \
+  --bind "$PWD:/workspace" \
+  --pwd /workspace \
+  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
+  containers/pdtomsstats_0.1.0.sif \
+  Rscript scripts/run_pipeline.R config/local-my-project.yml
+```
+
+Add the time-course configuration as the second argument to run maSigPro and
+Mfuzz after MSstats:
+
+```bash
+singularity exec \
+  --cleanenv \
+  --bind "$PWD:/workspace" \
+  --pwd /workspace \
+  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
+  containers/pdtomsstats_0.1.0.sif \
+  Rscript scripts/run_pipeline.R \
+  config/local-my-project.yml \
+  config/local-my-project-timecourse.yml
+```
+
+Do not run a full analysis on a shared login node unless the HPC administrators
+explicitly allow it.
+
+### Slurm batch job
+
+Save the following as `run-pdtomsstats.slurm`, replacing the two paths:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=pdtomsstats
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=32G
+#SBATCH --time=08:00:00
+#SBATCH --output=pdtomsstats-%j.out
+
+set -euo pipefail
+module load singularity
+
+PROJECT_DIR="/path/to/PDtoMSstats"
+IMAGE="/path/to/pdtomsstats_0.1.0.sif"
+
+cd "$PROJECT_DIR"
+
+singularity exec \
+  --cleanenv \
+  --bind "$PROJECT_DIR:/workspace" \
+  --pwd /workspace \
+  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
+  "$IMAGE" \
+  Rscript scripts/run_pipeline.R config/local-my-project.yml
+```
+
+Submit it with `sbatch run-pdtomsstats.slurm`. The YAML `number_of_cores` must
+not exceed `--cpus-per-task`. See the complete
+[Singularity/Apptainer HPC guide](docs/hpc-singularity.md) for input checks,
+time-course execution, Excel export, private-registry access, and
+troubleshooting.
+
 ## Analyze a new project
 
 The main report needs:
@@ -216,4 +312,4 @@ owner-approved license before publishing the repository publicly.
 
 Maintainers should follow the [GitHub publishing guide](docs/publishing.md)
 before sharing the repository. It covers private-first publishing,
-collaborator access, releases, and the optional prebuilt Docker image.
+collaborator access, releases, GitHub Pages, and the prebuilt container image.

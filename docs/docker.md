@@ -145,3 +145,6 @@ Maintainers can publish a multi-platform image to GitHub Container Registry by
 pushing a version tag. See [the publishing guide](publishing.md). Building with
 `docker compose build` remains the default because it works for private
 repositories and does not require container-registry access.
+
+HPC users who have SingularityCE or Apptainer instead of Docker should follow
+the [Singularity/Apptainer HPC guide](hpc-singularity.md).
