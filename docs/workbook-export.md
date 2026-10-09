@@ -27,14 +27,17 @@ The wrapper:
 1. Reads `msstats_workbook_export_objects.rds` from the results directory.
 2. Calculates unnormalized, non-imputed protein abundances with the report's
    saved summarization settings.
-3. Adds raw and normalized peptide and protein abundances to the hierarchical
-   workbook.
-4. Adds condition means and comparison statistics.
-5. Adds an `All MSstats Results` worksheet containing every protein–contrast
+3. Renames the complete hierarchical worksheet to `Peptide` and creates a
+   `Proteins` worksheet containing only master proteins and master-protein
+   candidates.
+4. Adds raw and normalized peptide and protein abundances to both applicable
+   views.
+5. Adds condition means and comparison statistics.
+6. Adds an `All MSstats Results` worksheet containing every protein–contrast
    result, including identifiers that do not exactly match a source master row.
-6. Creates comparison-specific DE and GSEA worksheets.
-7. Adds a `Contrast Guide` worksheet when the report saved contrast metadata.
-8. Creates an in-workbook data dictionary.
+7. Creates comparison-specific DE and GSEA worksheets.
+8. Adds a `Contrast Guide` worksheet when the report saved contrast metadata.
+9. Creates an in-workbook data dictionary.
 
 The contrast guide contains the coefficient formula, what each comparison
 measures, how to interpret positive and negative estimates, what a
@@ -44,14 +47,21 @@ directory.
 
 ## Formatting
 
-The main worksheet uses a consistent hierarchy:
+The workbook uses a consistent hierarchy:
 
-- Blue rows for proteins.
-- Warm rows for peptide headers and peptide details, including empty cells to
-  the right of peptide-level measurements.
+- Blue rows for master proteins and master-protein candidates across the full
+  worksheet width, including cells without values.
+- Warm rows for peptide headers and peptide details across the full worksheet
+  width, including cells without values.
 - Scientific notation for abundance and probability fields where appropriate.
 - Fixed widths for the first metadata columns.
-- Frozen row 1 and columns A through D.
+- Frozen row 1 and columns A through D on both `Proteins` and `Peptide`.
+- Non-finite statistical values written as `NA`, `Inf`, or `-Inf`, rather than
+  Excel numeric-error cells.
+
+The `Proteins` worksheet is the compact result view. The `Peptide` worksheet
+retains the original Proteome Discoverer hierarchy and its collapsed peptide
+sections.
 
 ## Proteome Discoverer compatibility
 

@@ -8,9 +8,62 @@ suppressPackageStartupMessages({
 preferred_protein_sheet <- function(workbook) {
   sheet_names <- names(workbook)
   if (!length(sheet_names)) return(NULL)
+  if ("Peptide" %in% sheet_names) return("Peptide")
+  if ("Peptides" %in% sheet_names) return("Peptides")
   if ("All_conditions Filtered" %in% sheet_names) return("All_conditions Filtered")
   if ("Proteins" %in% sheet_names) return("Proteins")
   sheet_names[[1]]
+}
+
+excel_nonfinite_label <- function(value) {
+  if (is.infinite(value)) {
+    if (value > 0) "Inf" else "-Inf"
+  } else {
+    "NA"
+  }
+}
+
+prepare_excel_data <- function(data) {
+  original <- as.data.frame(data, stringsAsFactors = FALSE, check.names = FALSE)
+  safe <- original
+  labels <- list()
+
+  for (column_index in seq_along(original)) {
+    values <- original[[column_index]]
+    if (!is.numeric(values)) next
+    invalid_rows <- which(!is.finite(values))
+    if (!length(invalid_rows)) next
+
+    labels[[length(labels) + 1L]] <- data.frame(
+      row = invalid_rows,
+      col = column_index,
+      value = vapply(values[invalid_rows], excel_nonfinite_label, character(1)),
+      stringsAsFactors = FALSE
+    )
+    safe[[column_index]][invalid_rows] <- NA_real_
+  }
+
+  list(
+    data = safe,
+    labels = if (length(labels)) do.call(rbind, labels) else data.frame(
+      row = integer(), col = integer(), value = character()
+    )
+  )
+}
+
+write_excel_labels <- function(
+  workbook, sheet, labels, start_row = 1L, start_col = 1L
+) {
+  if (!nrow(labels)) return(invisible(workbook))
+  for (label_index in seq_len(nrow(labels))) {
+    writeData(
+      workbook, sheet, labels$value[[label_index]],
+      startRow = start_row + labels$row[[label_index]] - 1L,
+      startCol = start_col + labels$col[[label_index]] - 1L,
+      colNames = FALSE, rowNames = FALSE
+    )
+  }
+  invisible(workbook)
 }
 
 worksheet_last_used_column <- function(workbook, sheet) {
@@ -288,6 +341,8 @@ meta <- readWorkbook(
 n_rows <- nrow(meta)
 
 protein_rows <- which(meta[[1]] == "Master Protein")
+protein_candidate_rows <- which(meta[[1]] == "Master Protein Candidate")
+protein_display_rows <- sort(c(protein_rows, protein_candidate_rows))
 peptide_header_rows <- which(
   is.na(meta[[1]]) & !is.na(meta[[2]]) & meta[[2]] == "Confidence"
 )
@@ -440,6 +495,7 @@ new_data[group_cols] <- lapply(seq_along(group_cols), function(j) {
 
 comparisons[, Ratio := 2^log2FC]
 stats_start <- max(group_cols) + 1L
+main_nonfinite_labels <- list()
 for (comparison_i in seq_along(comparison_order)) {
   label <- comparison_order[[comparison_i]]
   result <- comparisons[Label == label]
@@ -459,10 +515,36 @@ for (comparison_i in seq_along(comparison_order)) {
       x[protein_rows] <- as.character(result[[field]][result_idx])
     } else {
       x <- rep(NA_real_, n_rows)
-      x[protein_rows] <- as.numeric(result[[field]][result_idx])
+      values <- as.numeric(result[[field]][result_idx])
+      matched <- !is.na(result_idx)
+      invalid <- matched & !is.finite(values)
+      x[protein_rows] <- values
+      x[protein_rows[invalid]] <- NA_real_
+      if (any(invalid)) {
+        main_nonfinite_labels[[length(main_nonfinite_labels) + 1L]] <- data.frame(
+          row = protein_rows[invalid],
+          col = out_col,
+          value = vapply(values[invalid], excel_nonfinite_label, character(1)),
+          stringsAsFactors = FALSE
+        )
+      }
     }
     new_data[[out_col]] <- x
   }
+}
+main_nonfinite_labels <- if (length(main_nonfinite_labels)) {
+  do.call(rbind, main_nonfinite_labels)
+} else {
+  data.frame(row = integer(), col = integer(), value = character())
+}
+
+# Values that are absent from abundance matrices remain blank. NaN or infinite
+# values are also made blank so openxlsx cannot turn them into Excel errors.
+for (column_index in seq_along(new_data)) {
+  if (!is.numeric(new_data[[column_index]])) next
+  invalid <- is.nan(new_data[[column_index]]) |
+    is.infinite(new_data[[column_index]])
+  new_data[[column_index]][invalid] <- NA_real_
 }
 new_data <- as.data.frame(new_data, check.names = FALSE)
 
@@ -480,6 +562,11 @@ start_col <- if (length(existing_msstats_cols)) {
 } else {
   source_last_col + 1L
 }
+original_last_col <- start_col - 1L
+original_table <- readWorkbook(
+  wb, main_sheet, rows = seq_len(n_rows), cols = seq_len(original_last_col),
+  colNames = FALSE, skipEmptyRows = FALSE, skipEmptyCols = FALSE
+)
 if (length(existing_msstats_cols)) {
   # Clear the complete earlier MSstats block so removed runs or comparisons
   # cannot leave stale columns at the right edge of the worksheet.
@@ -496,6 +583,11 @@ writeData(
 )
 writeData(wb, main_sheet, t(protein_headers), startCol = start_col, startRow = 1, colNames = FALSE)
 writeData(wb, main_sheet, t(peptide_headers), startCol = start_col, startRow = 3, colNames = FALSE)
+if (nrow(main_nonfinite_labels)) {
+  main_excel_labels <- main_nonfinite_labels
+  main_excel_labels$col <- start_col + main_excel_labels$col - 1L
+  write_excel_labels(wb, main_sheet, main_excel_labels)
+}
 
 # Match the hierarchical Proteome Discoverer layout used by the reference
 # workbook. The rules are based on row roles and dynamic output blocks, rather
@@ -532,10 +624,8 @@ peptide_number_style <- do.call(createStyle, c(base_font, list(
   numFmt = "0.00E+00", fgFill = "#FCE4D6", border = grid_borders,
   borderColour = grid_colour, borderStyle = "thin", wrapText = TRUE
 )))
-blank_first_column_style <- do.call(createStyle, c(base_font, list(wrapText = TRUE)))
 
 last_output_col <- start_col + n_new_cols - 1L
-original_last_col <- start_col - 1L
 peptide_abundance_cols <- start_col + seq_len(2L * length(run_order)) - 1L
 
 # The reference workbook uses scientific notation for the peptide-level
@@ -592,9 +682,9 @@ setColWidths(wb, main_sheet, cols = start_col:last_output_col, widths = 13)
 # Header and hierarchy row heights mirror the reference layout.
 setRowHeights(wb, main_sheet, rows = 1, heights = 135)
 setRowHeights(wb, main_sheet, rows = peptide_header_rows, heights = 105)
-setRowHeights(wb, main_sheet, rows = protein_rows, heights = 30)
-long_description_rows <- protein_rows[
-  nchar(as.character(meta[[4]][protein_rows])) > 100L
+setRowHeights(wb, main_sheet, rows = protein_display_rows, heights = 30)
+long_description_rows <- protein_display_rows[
+  nchar(as.character(meta[[4]][protein_display_rows])) > 100L
 ]
 if (length(long_description_rows)) {
   setRowHeights(wb, main_sheet, rows = long_description_rows, heights = 45)
@@ -604,14 +694,13 @@ if (length(long_description_rows)) {
 # This includes collapsed peptide rows, so expanding a protein group does not
 # reveal a differently coloured section at the MSstats join.
 addStyle(wb, main_sheet, column_header_style, rows = 1, cols = 1:last_output_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, protein_row_style, rows = protein_rows, cols = 1:last_output_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, protein_number_style, rows = protein_rows, cols = start_col:last_output_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, protein_scientific_style, rows = protein_rows, cols = scientific_protein_cols, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, blank_first_column_style, rows = c(peptide_header_rows, peptide_rows), cols = 1, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, protein_row_style, rows = protein_display_rows, cols = 1:last_output_col, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, protein_number_style, rows = protein_display_rows, cols = start_col:last_output_col, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, protein_scientific_style, rows = protein_display_rows, cols = scientific_protein_cols, gridExpand = TRUE, stack = FALSE)
 # Keep each collapsed peptide section visually continuous through the final
 # column, including protein-only fields where peptide rows contain no value.
-addStyle(wb, main_sheet, peptide_header_style, rows = peptide_header_rows, cols = 2:last_output_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, peptide_row_style, rows = peptide_rows, cols = 2:last_output_col, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, peptide_header_style, rows = peptide_header_rows, cols = 1:last_output_col, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, peptide_row_style, rows = peptide_rows, cols = 1:last_output_col, gridExpand = TRUE, stack = FALSE)
 addStyle(wb, main_sheet, peptide_number_style, rows = peptide_rows, cols = scientific_peptide_cols, gridExpand = TRUE, stack = FALSE)
 
 description <- as.character(meta[[4]][protein_rows])
@@ -633,7 +722,15 @@ scientific_result_style <- createStyle(numFmt = "0.00E+00")
 replace_sheet <- function(sheet_name, data) {
   if (sheet_name %in% names(wb)) removeWorksheet(wb, sheet_name)
   addWorksheet(wb, sheet_name)
-  writeData(wb, sheet_name, data, withFilter = nrow(data) > 0, headerStyle = header_style)
+  prepared_data <- prepare_excel_data(data)
+  writeData(
+    wb, sheet_name, prepared_data$data,
+    withFilter = nrow(data) > 0, headerStyle = header_style
+  )
+  write_excel_labels(
+    wb, sheet_name, prepared_data$labels,
+    start_row = 2L
+  )
   freezePane(wb, sheet_name, firstRow = TRUE)
   setColWidths(wb, sheet_name, cols = seq_len(ncol(data)), widths = "auto")
   if (nrow(data) > 0) {
@@ -669,10 +766,15 @@ setcolorder(
   all_results,
   c("Label", "Protein", setdiff(names(all_results), c("Label", "Protein")))
 )
+all_results_export <- prepare_excel_data(as.data.frame(all_results))
 writeData(
-  wb, all_results_sheet, as.data.frame(all_results),
+  wb, all_results_sheet, all_results_export$data,
   withFilter = nrow(all_results) > 0L,
   headerStyle = header_style
+)
+write_excel_labels(
+  wb, all_results_sheet, all_results_export$labels,
+  start_row = 2L
 )
 freezePane(wb, all_results_sheet, firstRow = TRUE, firstActiveCol = 3L)
 all_result_widths <- rep(14, ncol(all_results))
@@ -745,7 +847,8 @@ for (label in comparison_order) {
 
 guide <- data.frame(
   Section = c(
-    "Source analysis", "Peptide calculated abundance", "Protein unnormalized abundance",
+    "Source analysis", "Proteins worksheet", "Peptide worksheet",
+    "Peptide calculated abundance", "Protein unnormalized abundance",
     "Peptide normalized abundance",
     "Protein normalized abundance", "Group abundance", "Comparison ratio",
     "Contrast Guide", "All MSstats Results", "Differential-expression sheets",
@@ -753,6 +856,16 @@ guide <- data.frame(
   ),
   Definition = c(
     source_analysis_description,
+    paste0(
+      "Protein-only view containing Master Protein and Master Protein Candidate ",
+      "rows from the source workbook. MSstats values are present where the ",
+      "source accession exactly matches a modeled master protein."
+    ),
+    paste0(
+      "Hierarchical Proteome Discoverer view containing protein rows, protein ",
+      "candidate rows, peptide headers, and peptide rows. Peptide sections retain ",
+      "their source grouping and collapsed-row behavior."
+    ),
     "Sum of positive PDtoMSstatsFormat feature intensities for a protein-peptide-run across precursor charge states; linear scale.",
     paste0(
       "MSstats ProteinLevelData LogIntensities from a second dataProcess call ",
@@ -772,7 +885,12 @@ guide <- data.frame(
       "Arithmetic mean of MSstats protein LogIntensities within each condition: ",
       paste(group_order, collapse = ", "), "; log2 scale."
     ),
-    "2 raised to the MSstats log2FC. Remaining fields are copied from groupComparison, including uncertainty, p-values, missingness, imputation, and issue flags.",
+    paste0(
+      "2 raised to the MSstats log2FC. Remaining fields are copied from ",
+      "groupComparison, including uncertainty, p-values, missingness, imputation, ",
+      "and issue flags. Non-finite values are displayed as NA, Inf, or -Inf so ",
+      "Excel does not display numeric error cells."
+    ),
     paste0(
       "One row per statistical contrast, with its coefficient formula, plain-language ",
       "meaning, direction of positive and negative estimates, and limitations. The ",
@@ -801,21 +919,122 @@ addStyle(
   rows = 2:(nrow(guide) + 1), cols = 1:2, gridExpand = TRUE, stack = TRUE
 )
 
+# Give the complete hierarchical worksheet an unambiguous name, then create a
+# compact worksheet that contains only protein and protein-candidate rows.
+original_main_sheet <- main_sheet
+if (!identical(main_sheet, "Peptide")) {
+  if ("Peptide" %in% names(wb)) removeWorksheet(wb, "Peptide")
+  renamed_sheets <- names(wb)
+  renamed_sheets[match(main_sheet, renamed_sheets)] <- "Peptide"
+  names(wb) <- renamed_sheets
+  main_sheet <- "Peptide"
+}
+
+protein_sheet <- "Proteins"
+if (protein_sheet %in% names(wb)) removeWorksheet(wb, protein_sheet)
+addWorksheet(wb, protein_sheet)
+
+protein_original_data <- original_table[protein_display_rows, , drop = FALSE]
+protein_msstats_data <- new_data[protein_display_rows, , drop = FALSE]
+protein_only_headers <- c(
+  original_header_values[seq_len(original_last_col)],
+  protein_headers
+)
+writeData(
+  wb, protein_sheet, t(protein_only_headers),
+  startRow = 1L, startCol = 1L, colNames = FALSE, rowNames = FALSE
+)
+writeData(
+  wb, protein_sheet, protein_original_data,
+  startRow = 2L, startCol = 1L, colNames = FALSE, rowNames = FALSE,
+  keepNA = FALSE
+)
+writeData(
+  wb, protein_sheet, protein_msstats_data,
+  startRow = 2L, startCol = start_col, colNames = FALSE, rowNames = FALSE,
+  keepNA = FALSE
+)
+
+if (nrow(main_nonfinite_labels)) {
+  protein_nonfinite_labels <- main_nonfinite_labels
+  protein_nonfinite_labels$row <- match(
+    protein_nonfinite_labels$row, protein_display_rows
+  ) + 1L
+  protein_nonfinite_labels$col <-
+    start_col + protein_nonfinite_labels$col - 1L
+  protein_nonfinite_labels <- protein_nonfinite_labels[
+    !is.na(protein_nonfinite_labels$row), , drop = FALSE
+  ]
+  write_excel_labels(wb, protein_sheet, protein_nonfinite_labels)
+}
+
+addFilter(wb, protein_sheet, rows = 1L, cols = seq_len(last_output_col))
+freezePane(wb, protein_sheet, firstActiveRow = 2L, firstActiveCol = 5L)
+setColWidths(wb, protein_sheet, cols = 1:original_last_col, widths = 12)
+if (length(wide_original_cols)) {
+  setColWidths(wb, protein_sheet, cols = wide_original_cols, widths = 40)
+}
+setColWidths(
+  wb, protein_sheet, cols = start_col:last_output_col, widths = 13
+)
+setRowHeights(wb, protein_sheet, rows = 1L, heights = 135)
+protein_only_rows <- seq_len(length(protein_display_rows)) + 1L
+setRowHeights(wb, protein_sheet, rows = protein_only_rows, heights = 30)
+protein_only_long_rows <- match(long_description_rows, protein_display_rows) + 1L
+protein_only_long_rows <- protein_only_long_rows[
+  !is.na(protein_only_long_rows)
+]
+if (length(protein_only_long_rows)) {
+  setRowHeights(
+    wb, protein_sheet, rows = protein_only_long_rows, heights = 45
+  )
+}
+addStyle(
+  wb, protein_sheet, column_header_style,
+  rows = 1L, cols = seq_len(last_output_col),
+  gridExpand = TRUE, stack = FALSE
+)
+addStyle(
+  wb, protein_sheet, protein_row_style,
+  rows = protein_only_rows, cols = seq_len(last_output_col),
+  gridExpand = TRUE, stack = FALSE
+)
+addStyle(
+  wb, protein_sheet, protein_number_style,
+  rows = protein_only_rows, cols = start_col:last_output_col,
+  gridExpand = TRUE, stack = FALSE
+)
+addStyle(
+  wb, protein_sheet, protein_scientific_style,
+  rows = protein_only_rows, cols = scientific_protein_cols,
+  gridExpand = TRUE, stack = FALSE
+)
+
 # openxlsx intentionally resets the worksheet dimension when loading. Restore
 # the source report's final row and expand only the final column for the newly
 # appended fields so Excel's used range remains accurate.
+main_sheet_index <- match(main_sheet, names(wb))
 wb$worksheets[[main_sheet_index]]$dimension <- sprintf(
   "<dimension ref=\"A1:%s%d\"/>",
   int2col(start_col + n_new_cols - 1L),
   n_rows + 1L
 )
 current_sheet_names <- names(wb)
+template_other_sheets <- setdiff(template_sheet_order, original_main_sheet)
 desired_sheet_order <- c(
   "MSstats Export Guide",
   "Contrast Guide",
   all_results_sheet,
-  template_sheet_order[template_sheet_order %in% current_sheet_names],
-  setdiff(current_sheet_names, template_sheet_order)
+  protein_sheet,
+  main_sheet,
+  template_other_sheets[template_other_sheets %in% current_sheet_names],
+  setdiff(
+    current_sheet_names,
+    c(
+      "MSstats Export Guide", "Contrast Guide", all_results_sheet,
+      protein_sheet, main_sheet, template_other_sheets
+    )
+  )
 )
 desired_sheet_order <- unique(
   desired_sheet_order[desired_sheet_order %in% current_sheet_names]
@@ -891,6 +1110,7 @@ dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
 saveWorkbook(wb, output_file, overwrite = TRUE)
 cat("Saved:", normalizePath(output_file, winslash = "/", mustWork = TRUE), "\n")
 cat("Protein rows:", length(protein_rows), "\n")
+cat("Protein candidate rows:", length(protein_candidate_rows), "\n")
 cat("Peptide rows:", length(peptide_rows), "\n")
 cat("Appended columns:", n_new_cols, "\n")
 invisible(output_file)

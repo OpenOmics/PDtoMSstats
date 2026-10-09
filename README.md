@@ -258,7 +258,9 @@ docker compose run --rm pdtomsstats \
 ```
 
 The exporter uses only R packages, including `openxlsx2` when a Proteome
-Discoverer workbook needs compatibility repair. Details are in the
+Discoverer workbook needs compatibility repair. The result contains a compact
+`Proteins` worksheet and a complete hierarchical `Peptide` worksheet;
+non-finite statistics are shown as `NA`, `Inf`, or `-Inf`. Details are in the
 [workbook export guide](docs/workbook-export.md).
 
 ## Native installation

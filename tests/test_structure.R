@@ -115,6 +115,10 @@ export_script <- readLines(
   warn = FALSE
 )
 required_export_text <- c(
+  "protein_candidate_rows",
+  "prepare_excel_data",
+  "protein_sheet <- \"Proteins\"",
+  "main_sheet <- \"Peptide\"",
   "topLeftCell=\\\"E2\\\"",
   "wb$worksheets[[main_sheet_index]]$sheetViews <-",
   "wb$worksheets[[main_sheet_index]]$freezePane <- main_freeze_pane"

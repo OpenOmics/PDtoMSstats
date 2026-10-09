@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Split the formatted workbook into a protein-only `Proteins` worksheet and a
+  complete hierarchical `Peptide` worksheet.
+- Extended hierarchy colors through blank cells and included master-protein
+  candidates in protein formatting.
+- Replaced non-finite numeric Excel errors with explicit `NA`, `Inf`, and
+  `-Inf` labels.
+
 ## 0.1.0 - 2026-10-09
 
 - Added the generalized PSM and annotation-driven MSstats report.
