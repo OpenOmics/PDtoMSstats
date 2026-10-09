@@ -4,6 +4,9 @@ Docker isolates the complete analysis environment from the host operating
 system. Linux, Windows, and macOS users run the same R, Quarto, system
 libraries, and R package set.
 
+For a slower, more detailed introduction written for first-time command-line
+users, begin with [Getting started without R programming](getting-started.md).
+
 ## Install Docker
 
 - Windows and macOS: install Docker Desktop and enable Docker Compose.
@@ -32,6 +35,9 @@ packages.
 
 The Dockerfile supports `linux/amd64` and `linux/arm64`. Docker Desktop selects
 the correct architecture automatically, including Apple Silicon Macs.
+
+The first build compiles a large scientific R environment and can take a long
+time. This is normal. Later builds reuse Docker's cache.
 
 ## Run the example
 
@@ -132,3 +138,10 @@ docker compose run --rm --user "$(id -u):$(id -g)" \
 - Input paths outside the repository are not mounted by default. Copy or mount
   them explicitly rather than embedding host-specific absolute paths in shared
   configuration files.
+
+## Prebuilt GitHub image
+
+Maintainers can publish a multi-platform image to GitHub Container Registry by
+pushing a version tag. See [the publishing guide](publishing.md). Building with
+`docker compose build` remains the default because it works for private
+repositories and does not require container-registry access.

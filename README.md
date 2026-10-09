@@ -9,6 +9,24 @@ Docker is the recommended way to run the workflow. The same image is used on
 Linux, Windows, Intel macOS, and Apple Silicon macOS, so users do not need to
 install R, Quarto, compilers, or individual R packages on the host computer.
 
+## Start here
+
+If you are not comfortable with command-line tools, use the
+[step-by-step getting started guide](docs/getting-started.md). It explains how
+to download the repository, install Docker Desktop, run the demonstration,
+add your own files, edit the small configuration file, and find the results.
+No R programming is required for routine use.
+
+In brief, a user supplies:
+
+- a Proteome Discoverer PSM table;
+- a sample annotation table;
+- a short YAML configuration file based on the provided template.
+
+The workflow returns a self-contained HTML report, result tables, figures,
+saved analysis objects, and, when a Proteome Discoverer protein workbook is
+provided, a formatted Excel workbook.
+
 ```mermaid
 flowchart LR
     PSM[PSM table] --> MAIN[MSstats report]
@@ -22,7 +40,7 @@ flowchart LR
     TABLES --> XLSX
 ```
 
-## Quick start with Docker
+## Quick test with Docker
 
 Requirements:
 
@@ -31,15 +49,22 @@ Requirements:
 - at least 8 GB RAM available to Docker; 12–16 GB is preferable for large
   studies.
 
-Build the image and check the installed environment:
+Download or clone this repository, open a terminal in its top-level folder,
+then build the image and check the installed environment:
 
 ```bash
 docker compose build
 docker compose run --rm pdtomsstats
 ```
 
-Run the bundled de-identified example from PSM input through time-course
-analysis:
+Run only the main MSstats stage of the bundled de-identified example:
+
+```bash
+docker compose run --rm pdtomsstats \
+  Rscript scripts/run_pipeline.R config/example-data.yml
+```
+
+To also test the optional time-course stage, add its configuration:
 
 ```bash
 docker compose run --rm pdtomsstats \
@@ -188,3 +213,7 @@ rendered report.
 
 No distribution license has been selected yet. Replace `LICENSE` with the
 owner-approved license before publishing the repository publicly.
+
+Maintainers should follow the [GitHub publishing guide](docs/publishing.md)
+before sharing the repository. It covers private-first publishing,
+collaborator access, releases, and the optional prebuilt Docker image.

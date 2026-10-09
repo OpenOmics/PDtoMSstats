@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added a beginner-oriented Docker walkthrough for Windows, macOS, and Linux.
+- Added private-first GitHub publishing and collaborator instructions.
+- Added an automated multi-platform GitHub Container Registry release workflow.
+
 ## 0.1.0 - 2026-10-07
 
 - Added the generalized PSM and annotation-driven MSstats report.
