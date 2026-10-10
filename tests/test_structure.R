@@ -30,6 +30,7 @@ required_files <- c(
   "docs/installation.md",
   "docs/timecourse.md",
   "docs/_quarto.yml",
+  "docs/styles.css",
   ".github/workflows/pages.yml",
   ".github/workflows/publish-container.yml",
   "R/dependencies.R",
