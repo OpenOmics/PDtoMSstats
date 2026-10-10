@@ -92,8 +92,8 @@ internet access:
 ```bash
 module load singularity
 mkdir -p containers
-singularity pull containers/pdtomsstats_0.1.0.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.1.0
+singularity pull containers/pdtomsstats_0.1.1.sif \
+  docker://ghcr.io/openomics/pdtomsstats:0.1.1
 ```
 
 For a private GitHub Container Registry package, first use
@@ -119,7 +119,7 @@ singularity exec \
   --bind "$PWD:/workspace" \
   --pwd /workspace \
   --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.0.sif \
+  containers/pdtomsstats_0.1.1.sif \
   Rscript scripts/run_pipeline.R config/local-my-project.yml
 ```
 
@@ -132,7 +132,7 @@ singularity exec \
   --bind "$PWD:/workspace" \
   --pwd /workspace \
   --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.0.sif \
+  containers/pdtomsstats_0.1.1.sif \
   Rscript scripts/run_pipeline.R \
   config/local-my-project.yml \
   config/local-my-project-timecourse.yml
@@ -157,7 +157,7 @@ set -euo pipefail
 module load singularity
 
 PROJECT_DIR="/path/to/PDtoMSstats"
-IMAGE="/path/to/pdtomsstats_0.1.0.sif"
+IMAGE="/path/to/pdtomsstats_0.1.1.sif"
 
 cd "$PROJECT_DIR"
 

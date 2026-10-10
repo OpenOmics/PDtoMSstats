@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.1 - 2026-10-09
+
 - Split the formatted workbook into a protein-only `Proteins` worksheet and a
   complete hierarchical `Peptide` worksheet.
 - Extended hierarchy colors through blank cells and included master-protein

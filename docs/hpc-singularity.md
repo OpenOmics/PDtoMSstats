@@ -55,8 +55,8 @@ multiple analyses and does not need to be copied into every project.
 mkdir -p containers
 
 singularity pull \
-  containers/pdtomsstats_0.1.0.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.1.0
+  containers/pdtomsstats_0.1.1.sif \
+  docker://ghcr.io/openomics/pdtomsstats:0.1.1
 ```
 
 Pulling converts the multi-platform GitHub Container Registry image to a SIF
@@ -91,8 +91,8 @@ Some older Singularity versions use an interactive pull instead:
 
 ```bash
 singularity pull --docker-login \
-  containers/pdtomsstats_0.1.0.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.1.0
+  containers/pdtomsstats_0.1.1.sif \
+  docker://ghcr.io/openomics/pdtomsstats:0.1.1
 ```
 
 The official documentation explains
@@ -119,7 +119,7 @@ singularity exec \
   --bind "$PWD:/workspace" \
   --pwd /workspace \
   --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.0.sif \
+  containers/pdtomsstats_0.1.1.sif \
   Rscript scripts/check_environment.R
 ```
 
@@ -166,7 +166,7 @@ singularity exec \
   --bind "$PWD:/workspace" \
   --pwd /workspace \
   --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.0.sif \
+  containers/pdtomsstats_0.1.1.sif \
   Rscript scripts/check_inputs.R config/local-my-project.yml
 ```
 
@@ -178,7 +178,7 @@ singularity exec \
   --bind "$PWD:/workspace" \
   --pwd /workspace \
   --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.0.sif \
+  containers/pdtomsstats_0.1.1.sif \
   Rscript scripts/run_pipeline.R config/local-my-project.yml
 ```
 
@@ -194,7 +194,7 @@ singularity exec \
   --bind "$PWD:/workspace" \
   --pwd /workspace \
   --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.0.sif \
+  containers/pdtomsstats_0.1.1.sif \
   Rscript scripts/run_pipeline.R \
   config/local-my-project.yml \
   config/local-my-project-timecourse.yml
@@ -213,7 +213,7 @@ singularity exec \
   --bind "$PWD:/workspace" \
   --pwd /workspace \
   --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.0.sif \
+  containers/pdtomsstats_0.1.1.sif \
   Rscript scripts/export_workbook.R \
   data/my-project/proteins.xlsx \
   results/my-project
@@ -236,7 +236,7 @@ set -euo pipefail
 module load singularity
 
 PROJECT_DIR="/path/to/PDtoMSstats"
-IMAGE="/path/to/containers/pdtomsstats_0.1.0.sif"
+IMAGE="/path/to/containers/pdtomsstats_0.1.1.sif"
 MAIN_CONFIG="config/local-my-project.yml"
 
 cd "$PROJECT_DIR"
@@ -296,7 +296,7 @@ Run from the repository root and confirm that the bind source is correct:
 ```bash
 pwd
 singularity exec --bind "$PWD:/workspace" \
-  containers/pdtomsstats_0.1.0.sif ls /workspace
+  containers/pdtomsstats_0.1.1.sif ls /workspace
 ```
 
 ### Permission denied while writing results
