@@ -80,18 +80,18 @@ Before tagging, make sure the same release version is recorded in
 changes.
 
 The `Publish Docker image` workflow runs when a version tag beginning with `v`
-is pushed. For version 0.1.1:
+is pushed. For version 0.1.2:
 
 ```bash
-git tag -a v0.1.1 -m "PDtoMSstats 0.1.1"
-git push origin v0.1.1
+git tag -a v0.1.2 -m "PDtoMSstats 0.1.2"
+git push origin v0.1.2
 ```
 
 The workflow publishes Linux AMD64 and ARM64 images to GitHub Container
 Registry with tags similar to:
 
 ```text
-ghcr.io/owner/pdtomsstats:0.1.1
+ghcr.io/owner/pdtomsstats:0.1.2
 ghcr.io/owner/pdtomsstats:0.1
 ghcr.io/owner/pdtomsstats:latest
 ```
@@ -116,8 +116,8 @@ to `ghcr.io` with permission to read packages.
 Replace `owner` with the lowercase GitHub owner:
 
 ```bash
-docker pull ghcr.io/owner/pdtomsstats:0.1.1
-docker run --rm ghcr.io/owner/pdtomsstats:0.1.1
+docker pull ghcr.io/owner/pdtomsstats:0.1.2
+docker run --rm ghcr.io/owner/pdtomsstats:0.1.2
 ```
 
 The second command should end with a successful environment check.

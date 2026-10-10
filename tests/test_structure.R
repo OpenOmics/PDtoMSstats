@@ -110,6 +110,15 @@ for (text in required_docker_text) {
   }
 }
 
+dockerignore <- readLines(file.path(repo_root, ".dockerignore"), warn = FALSE)
+if (any(trimws(dockerignore) == ".github")) {
+  stop(
+    ".dockerignore must retain .github because container structure checks ",
+    "validate the published workflow files.",
+    call. = FALSE
+  )
+}
+
 export_script <- readLines(
   file.path(repo_root, "scripts/export_msstats_workbook.R"),
   warn = FALSE

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.2 - 2026-10-09
+
+- Retained GitHub workflow definitions in the Docker build context so the
+  image's repository-structure validation succeeds during multi-platform
+  publishing.
+
 ## 0.1.1 - 2026-10-09
 
 - Split the formatted workbook into a protein-only `Proteins` worksheet and a
