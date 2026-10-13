@@ -12,16 +12,16 @@ install R, Quarto, compilers, or individual R packages on the host computer.
 ## Start here
 
 If you are not comfortable with command-line tools, use the
-[step-by-step getting started guide](docs/getting-started.md). It explains how
-to download the repository, install Docker Desktop, run the demonstration,
-add your own files, edit the small configuration file, and find the results.
-No R programming is required for routine use.
+[one-command guide](docs/command.md). The interactive wrapper asks for the
+files and outputs, detects standard columns, writes the resolved configuration,
+and calls the existing generalized workflow. No R programming is required for
+routine use.
 
 In brief, a user supplies:
 
 - a Proteome Discoverer PSM table;
 - a sample annotation table;
-- a short YAML configuration file based on the provided template.
+- optionally, a protein workbook, contrast file, or advanced YAML settings.
 
 The workflow returns a self-contained HTML report, result tables, figures,
 saved analysis objects, and, when a Proteome Discoverer protein workbook is
@@ -49,35 +49,35 @@ Requirements:
 - at least 8 GB RAM available to Docker; 12–16 GB is preferable for large
   studies.
 
-Download or clone this repository, open a terminal in its top-level folder,
-then build the image and check the installed environment:
+Download or clone this repository and open a terminal in its top-level folder.
+The launcher downloads the public container on its first run and starts an
+interactive setup:
 
 ```bash
-docker compose build
-docker compose run --rm pdtomsstats
+./pdtomsstats
 ```
 
-Run only the main MSstats stage of the bundled de-identified example:
+On Windows PowerShell, use:
 
-```bash
-docker compose run --rm pdtomsstats \
-  Rscript scripts/run_pipeline.R config/example-data.yml
+```powershell
+.\pdtomsstats.ps1
 ```
 
-To also test the optional time-course stage, add its configuration:
+Run the bundled de-identified example with one noninteractive command:
 
 ```bash
-docker compose run --rm pdtomsstats \
-  Rscript scripts/run_pipeline.R \
-  config/example-data.yml \
-  config/example-data-timecourse.yml
+./pdtomsstats run \
+  --config config/example-data.yml \
+  --outputs html,timecourse \
+  --timecourse-config config/example-data-timecourse.yml \
+  --non-interactive
 ```
 
 Outputs appear on the host under `results/example/` and figures under
 `figures/example/`. The example contains synthetic identifiers and is intended
 only to verify the software.
 
-See [Docker instructions](docs/docker.md) and the
+See the [one-command guide](docs/command.md), [Docker instructions](docs/docker.md), and the
 [example walkthrough](docs/example.md) for Windows, macOS, and Linux details.
 
 ## HPC with Singularity or Apptainer
@@ -281,12 +281,15 @@ Native OS-specific notes are in [installation.md](docs/installation.md).
 .
 ├── Dockerfile
 ├── compose.yaml
+├── pdtomsstats               macOS/Linux one-command launcher
+├── pdtomsstats.ps1           Windows PowerShell launcher
 ├── msstats-psm-report.qmd
 ├── timecourse-masigpro-mfuzz.qmd
 ├── config/                 Configuration templates and public example configs
 ├── data/example/           Small de-identified runnable example
 ├── R/                      Reusable analysis helpers
 ├── scripts/                Validation, rendering, export, and setup tools
+├── templates/              Optional custom report-section examples
 ├── docs/                   User and method documentation
 ├── tests/                  Lightweight repository and example checks
 ├── results/                Generated outputs; ignored by Git

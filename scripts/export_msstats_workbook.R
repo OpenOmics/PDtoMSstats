@@ -82,6 +82,29 @@ worksheet_last_used_column <- function(workbook, sheet) {
   max(used_columns)
 }
 
+repair_worksheet_dimensions <- function(workbook) {
+  for (sheet_index in seq_along(workbook$worksheets)) {
+    used_rows <- suppressWarnings(as.integer(
+      workbook$worksheets[[sheet_index]]$sheet_data$rows
+    ))
+    used_columns <- suppressWarnings(as.integer(
+      workbook$worksheets[[sheet_index]]$sheet_data$cols
+    ))
+    used_rows <- used_rows[is.finite(used_rows) & used_rows > 0L]
+    used_columns <- used_columns[
+      is.finite(used_columns) & used_columns > 0L
+    ]
+    if (!length(used_rows) || !length(used_columns)) next
+
+    workbook$worksheets[[sheet_index]]$dimension <- sprintf(
+      "<dimension ref=\"A1:%s%d\"/>",
+      int2col(max(used_columns)),
+      max(used_rows)
+    )
+  }
+  invisible(workbook)
+}
+
 try_openxlsx_workbook <- function(file) {
   tryCatch({
     workbook <- openxlsx::loadWorkbook(file)
@@ -199,6 +222,46 @@ add_contrast_guide_worksheet <- function(wb, contrast_guide) {
   invisible(wb)
 }
 
+comparison_file_key <- function(label) {
+  key <- gsub("[^A-Za-z0-9_-]+", "_", label)
+  tolower(key)
+}
+
+gsea_workbook_table <- function(results_dir, comparison_label) {
+  result_path <- file.path(
+    results_dir,
+    paste0("gsea_go_bp_", comparison_file_key(comparison_label), ".csv")
+  )
+  if (!file.exists(result_path)) {
+    return(data.frame(Note = "No GSEA result file was produced."))
+  }
+
+  result <- data.table::fread(result_path)
+  if (nrow(result)) return(as.data.frame(result))
+
+  note <- "No GSEA terms met the configured cutoff."
+  summary_path <- file.path(results_dir, "gsea_go_bp_run_summary.csv")
+  if (file.exists(summary_path)) {
+    summary <- as.data.frame(data.table::fread(summary_path))
+    if (all(c("Comparison", "status") %in% names(summary))) {
+      matching_rows <- which(
+        vapply(
+          as.character(summary[["Comparison"]]),
+          comparison_file_key,
+          character(1)
+        ) == comparison_file_key(comparison_label)
+      )
+      if (length(matching_rows)) {
+        run_status <- as.character(summary[["status"]][matching_rows[[1L]]])
+        if (!is.na(run_status) && nzchar(trimws(run_status))) {
+          note <- run_status
+        }
+      }
+    }
+  }
+  data.frame(Note = note)
+}
+
 export_msstats_workbook <- function(
   input_file, objects_file, results_dir, output_file = NULL
 ) {
@@ -243,11 +306,6 @@ required_column <- function(data, candidates, description) {
     )
   }
   found[[1]]
-}
-
-comparison_file_key <- function(label) {
-  key <- gsub("[^A-Za-z0-9_-]+", "_", label)
-  tolower(key)
 }
 
 annotation <- as.data.table(objects$annotation)
@@ -837,12 +895,8 @@ for (label in comparison_order) {
 }
 
 for (label in comparison_order) {
-  path <- file.path(
-    results_dir,
-    paste0("gsea_go_bp_", comparison_file_key(label), ".csv")
-  )
-  gsea <- if (file.exists(path)) data.table::fread(path) else data.frame(Note = "No GSEA result file was produced.")
-  replace_sheet(generated_sheet_name("GSEA", label), as.data.frame(gsea))
+  gsea <- gsea_workbook_table(results_dir, label)
+  replace_sheet(generated_sheet_name("GSEA", label), gsea)
 }
 
 guide <- data.frame(
@@ -1105,6 +1159,11 @@ for (sheet_index in seq_along(wb$worksheets)) {
     wb$worksheets_rels[[sheet_index]] <- relationships
   }
 }
+
+# loadWorkbook() resets imported worksheet dimensions to A1. Recalculate every
+# nonempty sheet after all writes and reordering so Excel recognizes the full
+# used range of generated DE, GSEA, guide, result, and protein worksheets.
+repair_worksheet_dimensions(wb)
 
 dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
 saveWorkbook(wb, output_file, overwrite = TRUE)

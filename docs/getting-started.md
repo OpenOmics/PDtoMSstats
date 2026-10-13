@@ -4,6 +4,10 @@ This guide is for someone who wants to run PDtoMSstats but does not routinely
 write scripts. Most steps involve copying files, changing a few lines in a
 text file, and pasting a command.
 
+For the shortest route, use the [one-command runner](command.md). It prompts
+for the same information described below and writes the YAML configuration for
+you. This longer guide explains every underlying file and choice.
+
 ## What Docker does
 
 Docker provides R, Quarto, MSstats, maSigPro, Mfuzz, and the other required

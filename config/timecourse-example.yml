@@ -33,3 +33,6 @@ cluster_diagnostic_repeats: 20
 core_membership: 0.70
 
 random_seed: 20261007
+
+# Optional QMD fragment(s) appended to the time-course report.
+extra_qmd: null

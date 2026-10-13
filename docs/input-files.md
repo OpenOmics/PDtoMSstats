@@ -4,7 +4,7 @@
 
 The PSM input may be an Excel workbook (`.xls` or `.xlsx`) or a delimited
 file (`.csv`, `.tsv`, or tab-delimited `.txt`). The default Excel worksheet
-name is `PSMs`. It must contain these columns exactly:
+name is `PSMs`. MSstats needs the following fields:
 
 | Column | Purpose |
 |---|---|
@@ -21,8 +21,11 @@ The report also uses these columns when they are present:
 - `Modifications`
 - `Master Protein Descriptions`
 
-Column names are read with minimal repair, so spelling, capitalization, and
-spaces must match.
+The wrapper detects the standard headers and common alternatives such as
+`Run`, `Modified Sequence`, `Precursor Charge`, `Accession`, and `Intensity`.
+Use the explicit column-mapping command options or YAML settings when an input
+uses another name. The original file is never modified; headers are normalized
+in memory and recorded in the resolved configuration.
 
 ## Annotation table
 
@@ -31,10 +34,10 @@ Its selected worksheet or table must contain:
 
 | Column | Purpose |
 |---|---|
-| `File Name` | Raw filename or readable sample name |
+| `File Name` | Raw filename or readable sample name; `File ID` can be used when absent |
 | `File ID` | Exact identifier found in the PSM workbook |
 | `Condition` | Experimental condition; optional when it is built from other columns |
-| `BioReplicate` | Biological replicate identifier |
+| `BioReplicate` | Biological replicate identifier; for independent samples, `File ID` can be used when absent |
 
 Example:
 
@@ -48,6 +51,11 @@ Example:
 The annotation workbook may contain extra rows. Only `File ID` values found in
 the PSM workbook are retained. Every PSM `File ID` must have exactly one
 matching annotation row.
+
+The wrapper detects common structural headers and provides explicit mapping
+options. When an independent-sample annotation lacks `File Name` or
+`BioReplicate`, it can construct that field from `File ID`. This fallback must
+not be used to disguise a repeated-measures design.
 
 To build `Condition` from two or more annotation columns, set the column names
 and a template in the configuration. For example:

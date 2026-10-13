@@ -36,8 +36,19 @@ params:
   report_label: "MSstats analysis"
   psm_file: null
   psm_sheet: "PSMs"
+  psm_file_id_column: "File ID"
+  psm_sequence_column: "Annotated Sequence"
+  psm_charge_column: "Charge"
+  psm_protein_column: "Master Protein Accessions"
+  psm_intensity_column: "Quan Value"
   annotation_file: null
   annotation_sheet: 1
+  annotation_file_name_column: "File Name"
+  annotation_file_id_column: "File ID"
+  annotation_bioreplicate_column: "BioReplicate"
+  annotation_condition_column: "Condition"
+  file_name_from_file_id: false
+  bioreplicate_from_file_id: false
   condition_columns: null
   condition_template: null
   condition_separator: "_"
@@ -62,11 +73,14 @@ params:
   number_of_cores: 1
   volcano_p_cutoff: 0.05
   volcano_fc_cutoff: 1
+  differential_pvalue_cutoff: null
+  differential_log2fc_cutoff: null
   volcano_top_labels: 10
   volcano_split_axis_quantile: 0.95
   volcano_split_axis_min_ratio: 1.8
   volcano_split_axis_scales: 0.35
   qc_max_features: 5000
+  qc_max_plot_rows: 250000
   qc_top_cv_proteins: 25
   power_alpha: 0.05
   power_target: 0.8
@@ -78,6 +92,8 @@ params:
   gsea_dot_show_categories: 10
   gsea_tree_show_categories: 20
   gsea_tree_label_wrap: 40
+  extra_qmd: null
+  report_template: null
 ---
 
 ```{r, include=FALSE}
@@ -108,6 +124,7 @@ required_packages <- c(
   "readr",
   "DT",
   "knitr",
+  "xfun",
   "tibble",
   "clusterProfiler",
   "AnnotationDbi",
@@ -169,6 +186,26 @@ annotation_file <- normalizePath(
 output_dir <- resolve_path(params$output_dir)
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 read_psm_n_max <- if (is.null(params$max_psm_rows)) Inf else params$max_psm_rows
+differential_pvalue_cutoff <- if (
+  is.null(params$differential_pvalue_cutoff)
+) params$volcano_p_cutoff else params$differential_pvalue_cutoff
+differential_log2fc_cutoff <- if (
+  is.null(params$differential_log2fc_cutoff)
+) params$volcano_fc_cutoff else params$differential_log2fc_cutoff
+if (
+  length(differential_pvalue_cutoff) != 1L ||
+    !is.finite(differential_pvalue_cutoff) ||
+    differential_pvalue_cutoff < 0 || differential_pvalue_cutoff > 1
+) {
+  stop("differential_pvalue_cutoff must be between 0 and 1.", call. = FALSE)
+}
+if (
+  length(differential_log2fc_cutoff) != 1L ||
+    !is.finite(differential_log2fc_cutoff) ||
+    differential_log2fc_cutoff < 0
+) {
+  stop("differential_log2fc_cutoff must be nonnegative.", call. = FALSE)
+}
 source(file.path(report_dir, "R", "pathway-analysis-functions.R"), local = knitr::knit_global())
 source(file.path(report_dir, "R", "contrast-functions.R"), local = knitr::knit_global())
 source(file.path(report_dir, "R", "input-functions.R"), local = knitr::knit_global())
@@ -176,8 +213,15 @@ organism_db <- getExportedValue(params$organism_package, params$organism_package
 
 figure_dir <- resolve_path(params$figures_dir)
 dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+# Keep the files in the requested directory, but give knitr a path relative to
+# the report. Pandoc can then find and embed them even when figures_dir is an
+# absolute path outside this repository.
+report_figure_dir <- xfun::relative_path(
+  normalizePath(figure_dir, winslash = "/", mustWork = TRUE),
+  dir = report_dir
+)
 knitr::opts_chunk$set(
-  fig.path = file.path(params$figures_dir, paste0(params$request, "-")),
+  fig.path = file.path(report_figure_dir, paste0(params$request, "-")),
   dev = c("png", "pdf"),
   dpi = 150
 )
@@ -211,7 +255,10 @@ conditions. MSstats supplied log2 fold changes, standard errors, test
 statistics, degrees of freedom, raw p-values, and Benjamini-Hochberg adjusted
 p-values. Differential expression was defined as an adjusted p-value below `r
 params$volcano_p_cutoff` and an absolute log2 fold change of at least `r
-params$volcano_fc_cutoff`.
+params$volcano_fc_cutoff` for report summaries and volcano plots. The formatted
+Excel DE worksheets used an adjusted p-value below `r
+differential_pvalue_cutoff` and an absolute log2 fold change of at least `r
+differential_log2fc_cutoff`.
 
 When enabled, GO Biological Process gene set enrichment analysis (GSEA) mapped
 UniProt accessions with `r params$organism_package` and ranked them by signed
@@ -235,12 +282,14 @@ psm_raw <- read_input_table(
   psm_file,
   sheet = params$psm_sheet,
   n_max = read_psm_n_max
-)
+) |>
+  normalize_psm_columns(params)
 
 annotation_raw <- read_input_table(
   annotation_file,
   sheet = params$annotation_sheet
-)
+) |>
+  normalize_annotation_columns(params)
 
 required_psm_cols <- c(
   "File ID",
@@ -324,6 +373,18 @@ if (any(is.na(annotation$Condition) | !nzchar(annotation$Condition))) {
 
 ```{r qc-helper-functions}
 source(file.path(report_dir, "R", "qc-helper-functions.R"), local = knitr::knit_global())
+
+positive_raw_intensity <- is.finite(psm[["Quan Value"]]) & psm[["Quan Value"]] > 0
+raw_intensity_plot_data <- sample_qc_rows_by_group(
+  psm,
+  group_col = "SpectrumFile",
+  maximum_rows = params$qc_max_plot_rows,
+  eligible = positive_raw_intensity
+) |>
+  left_join(annotation, by = c("SpectrumFile" = "Run")) |>
+  mutate(log2QuanValue = log2(.data$`Quan Value`))
+raw_intensity_qc_sampled <-
+  sum(positive_raw_intensity) > nrow(raw_intensity_plot_data)
 ```
 
 ## Sample Annotation
@@ -436,10 +497,16 @@ raw_intensity_qc |>
 ```
 
 ```{r raw-intensity-distribution, fig.height=7, fig.cap="Distribution of raw log2 PSM intensities for each sample, colored by condition."}
-psm |>
-  filter(!is.na(.data$`Quan Value`), .data$`Quan Value` > 0) |>
-  left_join(annotation, by = c("SpectrumFile" = "Run")) |>
-  mutate(log2QuanValue = log2(.data$`Quan Value`)) |>
+if (raw_intensity_qc_sampled) {
+  cat(
+    "The raw-intensity plots use a balanced sample of ",
+    format(nrow(raw_intensity_plot_data), big.mark = ","),
+    " positive PSM rows to limit memory use; MSstats uses the complete filtered input.\n\n",
+    sep = ""
+  )
+}
+
+raw_intensity_plot_data |>
   ggplot(aes(x = reorder(.data$FigureLabel, .data$log2QuanValue, median),
              y = .data$log2QuanValue, fill = .data$Condition)) +
   geom_boxplot(outlier.alpha = 0.15, outlier.size = 0.4) +
@@ -450,10 +517,7 @@ psm |>
 ```
 
 ```{r raw-intensity-density, fig.height=6, fig.cap="Kernel-density curves of raw log2 PSM intensities for each sample, colored by condition."}
-psm |>
-  filter(!is.na(.data$`Quan Value`), .data$`Quan Value` > 0) |>
-  left_join(annotation, by = c("SpectrumFile" = "Run")) |>
-  mutate(log2QuanValue = log2(.data$`Quan Value`)) |>
+raw_intensity_plot_data |>
   ggplot(aes(x = .data$log2QuanValue, color = .data$Condition, group = .data$SpectrumFile)) +
   geom_density(alpha = 0.45, linewidth = 0.5) +
   labs(x = "log2(Quan Value)", y = "Density",
@@ -614,18 +678,27 @@ filtered_run_qc |>
 ```
 
 ```{r filtered-run-correlation, fig.height=8, fig.cap="Pearson correlations among filtered peptide-charge feature profiles; samples are labeled by condition and biological replicate."}
-filtered_feature_matrix <- make_feature_run_matrix(
+filtered_matrix_input <- sample_qc_rows_by_group(
   psm_filtered_features,
+  group_col = "SpectrumFile",
+  maximum_rows = params$qc_max_plot_rows,
+  eligible = is.finite(psm_filtered_features[["Quan Value"]]) &
+    !is.na(psm_filtered_features[[".qc_feature_id"]])
+)
+filtered_feature_matrix <- make_feature_run_matrix(
+  filtered_matrix_input,
   feature_col = ".qc_feature_id",
   run_col = "SpectrumFile",
   value_col = "Quan Value"
 )
 
-plot_correlation_heatmap(
+filtered_correlation_plot <- plot_correlation_heatmap(
   filtered_feature_matrix,
   annotation,
   title = "Filtered PSM feature correlation between runs"
 )
+rm(filtered_matrix_input)
+filtered_correlation_plot
 ```
 
 ```{r helper-functions}
@@ -1177,12 +1250,18 @@ write_results <- function(results, file_name) {
 }
 
 quietly_run <- function(expr) {
-  result <- NULL
-  invisible(utils::capture.output(
-    invisible(utils::capture.output(result <- force(expr), type = "message")),
-    type = "output"
-  ))
-  result
+  tryCatch({
+    result <- NULL
+    invisible(utils::capture.output(
+      invisible(utils::capture.output(result <- force(expr), type = "message")),
+      type = "output"
+    ))
+    result
+  }, error = function(error) {
+    # Re-throw after capture.output() has restored its sinks. Otherwise an
+    # MSstats error can stop rendering without showing the useful message.
+    stop(conditionMessage(error), call. = FALSE)
+  })
 }
 ```
 
@@ -1192,7 +1271,21 @@ These diagnostics evaluate the converted and processed MSstats data before group
 comparisons are interpreted.
 
 ```{r convert-psm-data}
+# Large text exports can occupy several gigabytes in memory. The raw and QC
+# copies are no longer needed once their summaries and figures are complete.
+rm(
+  psm_raw,
+  psm,
+  annotation_raw,
+  psm_filtered_features,
+  positive_raw_intensity,
+  raw_intensity_plot_data
+)
+invisible(gc())
+
 msstats_input <- quietly_run(convert_pd_to_msstats(psm_filtered, annotation))
+rm(psm_filtered)
+invisible(gc())
 
 as_plain_tibble(msstats_input) |>
   count(Condition, Run, name = "features") |>
@@ -1465,8 +1558,8 @@ saveRDS(
       summary_method = params$summary_method,
       model_based_imputation = params$mb_impute,
       number_of_cores = params$number_of_cores,
-      differential_fdr_cutoff = params$volcano_p_cutoff,
-      differential_log2fc_cutoff = params$volcano_fc_cutoff,
+      differential_fdr_cutoff = differential_pvalue_cutoff,
+      differential_log2fc_cutoff = differential_log2fc_cutoff,
       organism_package = params$organism_package,
       contrast_file = if (has_contrast_file) params$contrast_file else NULL
     )
@@ -1901,6 +1994,29 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 </script>
+```
+
+```{r additional-report-sections, results='asis', echo=FALSE}
+extra_qmd_files <- as.character(params$extra_qmd)
+extra_qmd_files <- extra_qmd_files[
+  !is.na(extra_qmd_files) & nzchar(extra_qmd_files)
+]
+if (length(extra_qmd_files)) {
+  resolved_extra_qmd <- vapply(extra_qmd_files, function(path) {
+    normalizePath(resolve_path(path), winslash = "/", mustWork = TRUE)
+  }, character(1))
+  cat("\n\n## Additional report sections\n\n")
+  for (child_file in resolved_extra_qmd) {
+    cat(
+      knitr::knit_child(
+        child_file,
+        envir = knitr::knit_global(),
+        quiet = TRUE
+      ),
+      sep = "\n"
+    )
+  }
+}
 ```
 
 ## Session Info

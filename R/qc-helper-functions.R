@@ -19,6 +19,47 @@ has_modification <- function(x) {
     !vals %in% c("none", "unmodified", "no modifications", "na")
 }
 
+sample_qc_rows_by_group <- function(data, group_col, maximum_rows,
+                                    eligible = NULL, seed = 20250707) {
+  maximum_rows <- as.integer(maximum_rows)
+  if (length(maximum_rows) != 1L || is.na(maximum_rows) || maximum_rows < 1L) {
+    stop("maximum_rows must be a positive integer.", call. = FALSE)
+  }
+  if (!group_col %in% names(data)) {
+    stop("QC sampling column was not found: ", group_col, call. = FALSE)
+  }
+
+  if (is.null(eligible)) eligible <- rep(TRUE, nrow(data))
+  eligible <- !is.na(eligible) & eligible
+  indices <- which(eligible)
+  if (length(indices) <= maximum_rows) return(data[indices, , drop = FALSE])
+
+  groups <- as.character(data[[group_col]][indices])
+  groups[is.na(groups) | !nzchar(groups)] <- "(missing)"
+  group_indices <- split(indices, groups, drop = TRUE)
+  rows_per_group <- max(1L, floor(maximum_rows / length(group_indices)))
+
+  # Preserve the analysis RNG state so a QC plot cannot change MSstats model
+  # imputation or any downstream statistical result.
+  had_random_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_random_seed) previous_random_seed <- get(".Random.seed", envir = .GlobalEnv)
+  on.exit({
+    if (had_random_seed) {
+      assign(".Random.seed", previous_random_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+  set.seed(seed)
+
+  selected <- unlist(lapply(group_indices, function(group_rows) {
+    if (length(group_rows) <= rows_per_group) group_rows else {
+      sample(group_rows, rows_per_group)
+    }
+  }), use.names = FALSE)
+  data[sort(selected), , drop = FALSE]
+}
+
 add_psm_feature_id <- function(data) {
   data |>
     mutate(

@@ -17,6 +17,8 @@ website:
         text: Overview
       - text: Start here
         menu:
+          - href: command.md
+            text: One-command runner
           - href: getting-started.md
             text: Getting started
           - href: example.md

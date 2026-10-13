@@ -1,0 +1,15 @@
+### Samples included in each condition
+
+This example section is rendered after the standard report. It can use objects
+created by the main analysis, including `annotation`, `processed`,
+`all_comparison_output`, and `contrast_guide`.
+
+```{r custom-condition-sample-counts, fig.height=5, fig.cap="Number of analyzed samples in each condition."}
+annotation |>
+  dplyr::count(.data$Condition, name = "Samples") |>
+  ggplot2::ggplot(ggplot2::aes(x = .data$Condition, y = .data$Samples)) +
+  ggplot2::geom_col(fill = "#145DA0") +
+  ggplot2::coord_flip() +
+  ggplot2::labs(x = NULL, y = "Samples", title = "Samples by condition") +
+  ggplot2::theme_bw()
+```

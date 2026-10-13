@@ -91,10 +91,14 @@ RUN --mount=type=secret,id=corporate_ca,required=false \
 
 COPY . .
 
+RUN chmod +x scripts/pdtomsstats.R \
+    && ln -s /opt/PDtoMSstats/scripts/pdtomsstats.R /usr/local/bin/pdtomsstats
+
 RUN Rscript scripts/check_environment.R \
     && Rscript tests/test_structure.R \
     && Rscript tests/test_example_data.R \
     && Rscript tests/test_input_functions.R \
-    && Rscript tests/test_contrast_functions.R
+    && Rscript tests/test_contrast_functions.R \
+    && Rscript tests/test_wrapper_functions.R
 
 CMD ["Rscript", "scripts/check_environment.R"]

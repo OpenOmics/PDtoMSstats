@@ -1,9 +1,13 @@
 #!/usr/bin/env Rscript
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 2L || length(args) > 3L) {
+job_mode <- length(args) == 2L && identical(args[[1]], "--job")
+if (!job_mode && (length(args) < 2L || length(args) > 3L)) {
   stop(
-    "Usage: export_workbook.R <protein.xlsx> <results_dir> [output.xlsx]",
+    paste(
+      "Usage: export_workbook.R <protein.xlsx> <results_dir> [output.xlsx]",
+      "or export_workbook.R --job <job.yml>"
+    ),
     call. = FALSE
   )
 }
@@ -23,8 +27,31 @@ resolve_path <- function(path, must_work = TRUE) {
   normalizePath(candidate, winslash = "/", mustWork = must_work)
 }
 
-protein_file <- resolve_path(args[[1]])
-results_dir <- resolve_path(args[[2]])
+if (job_mode) {
+  if (!requireNamespace("yaml", quietly = TRUE)) {
+    stop("Install the yaml package to use --job.", call. = FALSE)
+  }
+  job_file <- resolve_path(args[[2]])
+  job <- yaml::read_yaml(job_file)
+  required_job_values <- c("protein_file", "results_dir")
+  missing_job_values <- required_job_values[
+    !vapply(required_job_values, function(name) {
+      value <- job[[name]]
+      !is.null(value) && length(value) == 1L && !is.na(value) && nzchar(value)
+    }, logical(1))
+  ]
+  if (length(missing_job_values)) {
+    stop(
+      "Workbook job is missing: ", paste(missing_job_values, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  protein_file <- resolve_path(job$protein_file)
+  results_dir <- resolve_path(job$results_dir)
+} else {
+  protein_file <- resolve_path(args[[1]])
+  results_dir <- resolve_path(args[[2]])
+}
 objects_file <- file.path(results_dir, "msstats_workbook_export_objects.rds")
 if (!file.exists(objects_file)) {
   stop(
@@ -38,7 +65,15 @@ default_output <- file.path(
   results_dir,
   paste0(tools::file_path_sans_ext(basename(protein_file)), "_MSstats.xlsx")
 )
-output_file <- if (length(args) == 3L) resolve_path(args[[3]], must_work = FALSE) else default_output
+output_file <- if (job_mode && !is.null(job$output_file) &&
+                   length(job$output_file) == 1L && !is.na(job$output_file) &&
+                   nzchar(job$output_file)) {
+  resolve_path(job$output_file, must_work = FALSE)
+} else if (!job_mode && length(args) == 3L) {
+  resolve_path(args[[3]], must_work = FALSE)
+} else {
+  default_output
+}
 
 calculate_script <- file.path("scripts", "calculate_unnormalized_msstats_protein_abundance.R")
 export_script <- file.path("scripts", "export_msstats_workbook.R")

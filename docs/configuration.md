@@ -13,6 +13,17 @@ the repository root.
 | `psm_sheet` | Worksheet name or number for an Excel PSM input | `PSMs` |
 | `annotation_file` | Annotation workbook path | required |
 | `annotation_sheet` | Annotation worksheet name or number | `1` |
+| `psm_file_id_column` | PSM run-identifier header | `File ID` |
+| `psm_sequence_column` | PSM peptide-sequence header | `Annotated Sequence` |
+| `psm_charge_column` | PSM charge header | `Charge` |
+| `psm_protein_column` | PSM protein-accession header | `Master Protein Accessions` |
+| `psm_intensity_column` | PSM quantitative-value header | `Quan Value` |
+| `annotation_file_id_column` | Annotation run-identifier header | `File ID` |
+| `annotation_file_name_column` | Annotation sample-name header | `File Name` |
+| `annotation_bioreplicate_column` | Annotation replicate header | `BioReplicate` |
+| `annotation_condition_column` | Existing condition header | `Condition` |
+| `file_name_from_file_id` | Construct missing `File Name` from `File ID` | `false` |
+| `bioreplicate_from_file_id` | Construct independent-sample replicate IDs from `File ID` | `false` |
 | `condition_columns` | Annotation columns used to construct `Condition` | `null` |
 | `condition_template` | Optional template using names such as `{Time}` | `null` |
 | `condition_separator` | Joiner used when no template is supplied | `_` |
@@ -25,6 +36,23 @@ When `condition_columns` is null, the annotation must contain `Condition`.
 When it is supplied, the workflow creates `Condition` from those columns. For
 example, `condition_columns: ["Time", "Group"]` with
 `condition_template: "{Time}h_{Group}"` creates `24h_Treatment`.
+
+The one-command wrapper detects standard and common alternative headers and
+writes these mapping settings automatically. Direct YAML users can set them
+explicitly. `bioreplicate_from_file_id` is appropriate only when every run is
+an independent biological sample.
+
+## Report customization
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `extra_qmd` | One path or a list of QMD fragments appended to the report | `null` |
+| `report_template` | Complete replacement QMD template | `null` |
+
+An extra QMD fragment runs in the report analysis environment and can use the
+standard result objects. Copy `templates/extra-figures-example.qmd` as a safe
+starting point. A custom QMD executes R code, so review it before use. The
+[one-command guide](command.md) documents the corresponding command options.
 
 ## Comparisons
 
@@ -81,6 +109,11 @@ the definitions for the formatted workbook exporter.
 | `summary_method` | Protein summarization method | `TMP` |
 | `mb_impute` | Enable model-based imputation | `true` |
 | `number_of_cores` | Cores supplied to MSstats | `1` |
+| `qc_max_plot_rows` | Balanced PSM-row limit for row-heavy input QC plots only | `250000` |
+
+The QC plot limit prevents very large PSM exports from exhausting memory during
+boxplot, density, and feature-correlation calculations. It does not filter the
+data submitted to MSstats.
 
 ## Differential plots and power
 
@@ -89,12 +122,18 @@ the definitions for the formatted workbook exporter.
 | `volcano_p_cutoff` | Adjusted p-value threshold | `0.05` |
 | `volcano_fc_cutoff` | Absolute log2 fold-change threshold | `1` |
 | `volcano_top_labels` | Maximum labels per volcano plot | `10` |
+| `differential_pvalue_cutoff` | Adjusted p-value threshold for Excel DE sheets; inherits `volcano_p_cutoff` when null | `null` |
+| `differential_log2fc_cutoff` | Absolute log2 fold-change threshold for Excel DE sheets; inherits `volcano_fc_cutoff` when null | `null` |
 | `power_alpha` | Type-I error rate | `0.05` |
 | `power_target` | Target statistical power | `0.80` |
 | `power_effect_log2fc` | Target absolute log2 fold change | `1` |
 
 Less commonly changed volcano, QC, and power display settings are documented
 in the parameter block at the top of `msstats-psm-report.qmd`.
+
+The one-command wrapper exposes the Excel thresholds as
+`--de-pvalue-cutoff` and `--de-log2fc-cutoff`. These affect the
+comparison-specific `DE ...` worksheets but do not change the volcano plots.
 
 ## Pathway analysis
 
@@ -107,3 +146,8 @@ in the parameter block at the top of `msstats-psm-report.qmd`.
 | `gsea_max_gene_set_size` | Maximum tested gene-set size | `500` |
 
 Install the selected organism package before rendering.
+
+The one-command wrapper exposes the GSEA table cutoff as
+`--gsea-pvalue-cutoff`. Empty GSEA Excel sheets include the run status (for
+example, too few mapped identifiers) so a skipped analysis is distinguishable
+from an export problem.

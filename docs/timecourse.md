@@ -3,6 +3,22 @@
 The time-course report uses the normalized protein-level abundances saved by
 the main MSstats report. It does not reread or reprocess the PSM file.
 
+The one-command wrapper can run both stages and create the time-course
+configuration automatically:
+
+```bash
+./pdtomsstats run \
+  --config config/local-project.yml \
+  --outputs html,timecourse \
+  --time-column TimePoint \
+  --group-column Infection \
+  --reference-group Control \
+  --comparison-group LGTV
+```
+
+See the [one-command guide](command.md) for Windows syntax and additional
+options.
+
 ## Appropriate design
 
 The current model is for independent samples. Every `BioReplicate` identifier

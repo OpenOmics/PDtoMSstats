@@ -57,8 +57,20 @@ if (!nzchar(quarto)) {
 source(file.path(repo_root, "R", "input-validation.R"))
 check_msstats_inputs(config_file, repo_root, verbose = TRUE)
 
-report_file <- file.path(repo_root, "msstats-psm-report.qmd")
-old_working_directory <- setwd(repo_root)
+has_custom_template <- !is.null(config$report_template) &&
+  length(config$report_template) == 1L &&
+  !is.na(config$report_template) &&
+  nzchar(config$report_template)
+report_file <- if (has_custom_template) {
+  normalizePath(
+    resolve_repo_path(config$report_template),
+    winslash = "/",
+    mustWork = TRUE
+  )
+} else {
+  file.path(repo_root, "msstats-psm-report.qmd")
+}
+old_working_directory <- setwd(dirname(report_file))
 on.exit(setwd(old_working_directory), add = TRUE)
 
 # Quarto is called from the repository root so the report itself can use a
@@ -84,7 +96,7 @@ if (!identical(render_status, 0L)) {
   stop("Quarto render failed with status ", render_status, ".", call. = FALSE)
 }
 
-rendered_file <- file.path(repo_root, output_name)
+rendered_file <- file.path(dirname(report_file), output_name)
 if (!file.exists(rendered_file)) {
   stop("Quarto finished but the expected HTML file was not found: ", rendered_file, call. = FALSE)
 }

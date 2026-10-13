@@ -10,6 +10,23 @@ psm_sheet: "PSMs"
 annotation_file: "data/example-project-annotation.xlsx"
 annotation_sheet: 1
 
+# Optional column mapping. Leave these defaults for standard Proteome
+# Discoverer exports. Change only the values whose input headers differ.
+psm_file_id_column: "File ID"
+psm_sequence_column: "Annotated Sequence"
+psm_charge_column: "Charge"
+psm_protein_column: "Master Protein Accessions"
+psm_intensity_column: "Quan Value"
+annotation_file_name_column: "File Name"
+annotation_file_id_column: "File ID"
+annotation_bioreplicate_column: "BioReplicate"
+annotation_condition_column: "Condition"
+
+# For independent samples, these may be set to true when File Name or
+# BioReplicate is absent. File ID will then be used for the missing field.
+file_name_from_file_id: false
+bioreplicate_from_file_id: false
+
 # Optional: create Condition from annotation columns instead of requiring a
 # pre-made Condition column. Placeholders refer to the selected column names.
 condition_columns: null
@@ -49,10 +66,19 @@ summary_method: "TMP"
 mb_impute: true
 number_of_cores: 1
 
+# Row-heavy input QC plots use at most this many PSM rows. Statistical analysis
+# still uses the complete filtered dataset.
+qc_max_plot_rows: 250000
+
 # Differential-expression display thresholds.
 volcano_p_cutoff: 0.05
 volcano_fc_cutoff: 1
 volcano_top_labels: 10
+
+# Optional thresholds for the comparison-specific Excel DE sheets. When null,
+# they inherit volcano_p_cutoff and volcano_fc_cutoff, preserving prior behavior.
+differential_pvalue_cutoff: null
+differential_log2fc_cutoff: null
 
 # Power-analysis defaults.
 power_alpha: 0.05
@@ -60,6 +86,11 @@ power_target: 0.80
 power_effect_log2fc: 1
 
 # GSEA defaults.
+# May also be overridden with --gsea-pvalue-cutoff.
 gsea_pvalue_cutoff: 0.05
 gsea_min_gene_set_size: 100
 gsea_max_gene_set_size: 500
+
+# Optional QMD fragment(s) appended to the standard report. The fragment can
+# use analysis objects already created by the report.
+extra_qmd: null

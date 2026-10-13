@@ -45,6 +45,12 @@ non-significant result means, and the main limitation of the test. The same
 information is available in `msstats_contrast_guide.csv` in the results
 directory.
 
+By default, DE worksheets use the report's volcano thresholds (adjusted
+p-value below `0.05` and absolute log2 fold change of at least `1`). Set
+`differential_pvalue_cutoff` and `differential_log2fc_cutoff` in YAML, or use
+the wrapper flags `--de-pvalue-cutoff` and `--de-log2fc-cutoff`, to change the
+Excel filters without changing the volcano plots.
+
 ## Formatting
 
 The workbook uses a consistent hierarchy:

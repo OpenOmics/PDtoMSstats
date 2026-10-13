@@ -8,6 +8,8 @@ repo_root <- normalizePath(
 
 required_files <- c(
   "README.md",
+  "pdtomsstats",
+  "pdtomsstats.ps1",
   "Dockerfile",
   "compose.yaml",
   "DESCRIPTION",
@@ -23,6 +25,7 @@ required_files <- c(
   "data/example/contrasts.tsv",
   "data/example/SHA256SUMS",
   "docs/docker.md",
+  "docs/command.md",
   "docs/example.md",
   "docs/getting-started.md",
   "docs/hpc-singularity.md",
@@ -31,10 +34,12 @@ required_files <- c(
   "docs/timecourse.md",
   "docs/_quarto.yml",
   "docs/styles.css",
+  "templates/extra-figures-example.qmd",
   ".github/workflows/pages.yml",
   ".github/workflows/publish-container.yml",
   "R/dependencies.R",
   "R/input-validation.R",
+  "R/wrapper-functions.R",
   "R/input-functions.R",
   "R/contrast-functions.R",
   "R/qc-helper-functions.R",
@@ -43,12 +48,14 @@ required_files <- c(
   "scripts/describe_contrasts.R",
   "scripts/install_dependencies.R",
   "scripts/check_environment.R",
+  "scripts/pdtomsstats.R",
   "scripts/run_pipeline.R",
   "scripts/render_report.R",
   "scripts/render_timecourse_report.R",
   "scripts/export_workbook.R",
   "scripts/export_msstats_workbook.R",
-  "scripts/calculate_unnormalized_msstats_protein_abundance.R"
+  "scripts/calculate_unnormalized_msstats_protein_abundance.R",
+  "tests/test_workbook_dimensions.R"
 )
 missing_files <- required_files[!file.exists(file.path(repo_root, required_files))]
 if (length(missing_files)) {
@@ -64,7 +71,9 @@ qmd <- readLines(file.path(repo_root, "msstats-psm-report.qmd"), warn = FALSE)
 required_qmd_text <- c(
   "pathway-analysis-functions.R",
   "qc-helper-functions.R",
-  "msstats_workbook_export_objects.rds"
+  "msstats_workbook_export_objects.rds",
+  "normalize_psm_columns(params)",
+  "additional-report-sections"
 )
 for (text in required_qmd_text) {
   if (!any(grepl(text, qmd, fixed = TRUE))) {
@@ -85,7 +94,8 @@ required_timecourse_text <- c(
   "Mfuzz::cselection",
   "Mfuzz::mfuzz",
   "Detailed methods",
-  "timecourse_group_difference_effects.csv"
+  "timecourse_group_difference_effects.csv",
+  "additional-timecourse-sections"
 )
 for (text in required_timecourse_text) {
   if (!any(grepl(text, timecourse_qmd, fixed = TRUE))) {
@@ -127,6 +137,7 @@ export_script <- readLines(
 required_export_text <- c(
   "protein_candidate_rows",
   "prepare_excel_data",
+  "repair_worksheet_dimensions(wb)",
   "protein_sheet <- \"Proteins\"",
   "main_sheet <- \"Peptide\"",
   "topLeftCell=\\\"E2\\\"",

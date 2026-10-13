@@ -45,6 +45,8 @@ params:
   cluster_diagnostic_repeats: 20
   core_membership: 0.70
   random_seed: 20261007
+  extra_qmd: null
+  report_template: null
 ---
 
 ```{r setup, include=FALSE}
@@ -1183,6 +1185,29 @@ DT::datatable(
     params$core_membership, "."
   )
 )
+```
+
+```{r additional-timecourse-sections, results='asis', echo=FALSE}
+extra_qmd_files <- as.character(params$extra_qmd)
+extra_qmd_files <- extra_qmd_files[
+  !is.na(extra_qmd_files) & nzchar(extra_qmd_files)
+]
+if (length(extra_qmd_files)) {
+  resolved_extra_qmd <- vapply(extra_qmd_files, function(path) {
+    normalizePath(resolve_path(path), winslash = "/", mustWork = TRUE)
+  }, character(1))
+  cat("\n\n# Additional report sections\n\n")
+  for (child_file in resolved_extra_qmd) {
+    cat(
+      knitr::knit_child(
+        child_file,
+        envir = knitr::knit_global(),
+        quiet = TRUE
+      ),
+      sep = "\n"
+    )
+  }
+}
 ```
 
 # Output files

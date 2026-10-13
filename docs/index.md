@@ -16,7 +16,7 @@ PDtoMSstats turns PSM and sample annotation files into quality-control reports,
 protein summaries, planned comparisons, pathway results, and polished Excel
 workbooks. Routine use does not require R programming.
 
-[Get started with Docker](getting-started.md){.btn .btn-primary .btn-lg}
+[Run the simple command](command.md){.btn .btn-primary .btn-lg}
 [Run on an HPC](hpc-singularity.md){.btn .btn-outline-primary .btn-lg}
 :::
 
@@ -31,11 +31,10 @@ require R programming.
 ::: {.guide-card}
 #### First-time user
 
-Start with [Getting started without R programming](getting-started.md). It
-walks through installing Docker, running the de-identified example, adding
-project files, editing the configuration, and finding the outputs.
+Start with the [one-command runner](command.md). It can prompt for the input
+files and design, or accept the choices directly for a reproducible batch run.
 
-[Open the step-by-step guide →](getting-started.md)
+[Run the workflow →](command.md)
 :::
 
 ::: {.guide-card}
@@ -51,8 +50,8 @@ compute nodes and Slurm jobs.
 #### Ready to configure a study
 
 Review the expected [input files](input-files.md), then copy the supplied YAML
-template and use the [configuration reference](configuration.md) to describe
-the study design.
+template only when advanced settings are needed. The wrapper writes the final
+resolved configuration automatically for routine analyses.
 
 [Prepare a project →](input-files.md)
 :::

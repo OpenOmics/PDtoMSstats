@@ -20,24 +20,44 @@ docker --version
 docker compose version
 ```
 
+## Simplest run
+
+From the repository root, use the launcher. It downloads the public GHCR image
+the first time and then opens the guided setup.
+
+macOS or Linux:
+
+```bash
+./pdtomsstats
+```
+
+Windows PowerShell:
+
+```powershell
+.\pdtomsstats.ps1
+```
+
+See the [one-command guide](command.md) for file, output, time-course, column
+mapping, and custom-figure options.
+
 ## Build and validate the image
 
-From the repository root:
+Maintainers and offline sites can still build locally:
 
 ```bash
 docker compose build
 docker compose run --rm pdtomsstats
 ```
 
-The second command runs `scripts/check_environment.R` and prints the versions
-of R, Quarto, Bioconductor, MSstats, maSigPro, Mfuzz, and the supporting
-packages.
+The second command runs `scripts/check_environment.R` and prints the installed
+R, Quarto, Bioconductor, MSstats, maSigPro, Mfuzz, and support-package versions.
 
 The Dockerfile supports `linux/amd64` and `linux/arm64`. Docker Desktop selects
 the correct architecture automatically, including Apple Silicon Macs.
 
-The first build compiles a large scientific R environment and can take a long
-time. This is normal. Later builds reuse Docker's cache.
+The first local build compiles a large scientific R environment and can take a
+long time. The launcher normally avoids that build by using the published
+multi-platform image.
 
 ## Run the example
 
@@ -45,7 +65,11 @@ The following command is identical in Bash, zsh, and PowerShell when written on
 one line:
 
 ```bash
-docker compose run --rm pdtomsstats Rscript scripts/run_pipeline.R config/example-data.yml config/example-data-timecourse.yml
+./pdtomsstats run \
+  --config config/example-data.yml \
+  --outputs html,timecourse \
+  --timecourse-config config/example-data-timecourse.yml \
+  --non-interactive
 ```
 
 The repository is mounted at `/workspace` inside the container. Files written
@@ -58,21 +82,13 @@ Keep project data and YAML files somewhere inside the repository so their paths
 are available through the mounted `/workspace` directory:
 
 ```bash
-docker compose run --rm pdtomsstats \
-  Rscript scripts/check_inputs.R config/local-project.yml
-
-docker compose run --rm pdtomsstats \
-  Rscript scripts/run_pipeline.R \
-  config/local-project.yml \
-  config/local-project-timecourse.yml
+./pdtomsstats run \
+  --config config/local-project.yml \
+  --outputs html
 ```
 
-To run only the main MSstats stage, omit the time-course configuration:
-
-```bash
-docker compose run --rm pdtomsstats \
-  Rscript scripts/run_pipeline.R config/local-project.yml
-```
+The original `check_inputs.R`, `run_pipeline.R`, rendering, and export scripts
+remain available for advanced use and backward compatibility.
 
 ## Resource settings
 
@@ -141,10 +157,9 @@ docker compose run --rm --user "$(id -u):$(id -g)" \
 
 ## Prebuilt GitHub image
 
-Maintainers can publish a multi-platform image to GitHub Container Registry by
-pushing a version tag. See [the publishing guide](publishing.md). Building with
-`docker compose build` remains the default because it works for private
-repositories and does not require container-registry access.
+Maintainers publish the multi-platform image to GitHub Container Registry by
+pushing a version tag. See [the publishing guide](publishing.md). The launcher
+uses that public image and falls back to `docker compose build` when needed.
 
 HPC users who have SingularityCE or Apptainer instead of Docker should follow
 the [Singularity/Apptainer HPC guide](hpc-singularity.md).

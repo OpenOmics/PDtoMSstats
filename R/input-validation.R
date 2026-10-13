@@ -41,7 +41,7 @@ check_msstats_inputs <- function(config_file, repo_root, verbose = TRUE) {
   }
 
   check_input <- function(file, sheet, required_columns, description,
-                          read_all = FALSE) {
+                          read_all = FALSE, normalizer = identity) {
     extension <- tolower(tools::file_ext(file))
     if (extension %in% c("xls", "xlsx")) {
       sheets <- readxl::excel_sheets(file)
@@ -61,6 +61,7 @@ check_msstats_inputs <- function(config_file, repo_root, verbose = TRUE) {
     preview <- read_input_table(
       file, sheet = sheet, n_max = if (read_all) Inf else 1
     )
+    preview <- normalizer(preview)
     missing_columns <- setdiff(required_columns, names(preview))
     if (length(missing_columns)) {
       stop(
@@ -92,7 +93,8 @@ check_msstats_inputs <- function(config_file, repo_root, verbose = TRUE) {
     psm_file,
     psm_sheet,
     c("File ID", "Annotated Sequence", "Charge", "Master Protein Accessions", "Quan Value"),
-    "PSM input"
+    "PSM input",
+    normalizer = function(data) normalize_psm_columns(data, config)
   )
   condition_columns <- as.character(config$condition_columns)
   condition_columns <- condition_columns[!is.na(condition_columns) & nzchar(condition_columns)]
@@ -107,7 +109,8 @@ check_msstats_inputs <- function(config_file, repo_root, verbose = TRUE) {
     annotation_sheet,
     annotation_required,
     "Annotation input",
-    read_all = TRUE
+    read_all = TRUE,
+    normalizer = function(data) normalize_annotation_columns(data, config)
   )
   annotation_conditions <- make_condition(
     annotation_preview,
