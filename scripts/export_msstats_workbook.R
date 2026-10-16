@@ -674,32 +674,65 @@ original_header <- readWorkbook(
 )
 original_header_values <- as.character(unlist(original_header[1, ], use.names = FALSE))
 existing_msstats_cols <- grep("^MSstats($|[[:space:]])", original_header_values)
-start_col <- if (length(existing_msstats_cols)) {
-  min(existing_msstats_cols)
-} else {
-  source_last_col + 1L
-}
-original_last_col <- start_col - 1L
-original_table <- readWorkbook(
-  wb, main_sheet, rows = seq_len(n_rows), cols = seq_len(original_last_col),
+existing_table <- readWorkbook(
+  wb, main_sheet, rows = seq_len(n_rows), cols = seq_len(source_last_col),
   colNames = FALSE, skipEmptyRows = FALSE, skipEmptyCols = FALSE
 )
-if (length(existing_msstats_cols)) {
-  # Clear the complete earlier MSstats block so removed runs or comparisons
-  # cannot leave stale columns at the right edge of the worksheet.
-  deleteData(
-    wb, main_sheet,
-    cols = seq.int(min(existing_msstats_cols), max(existing_msstats_cols)),
-    rows = seq_len(n_rows + 1L),
-    gridExpand = TRUE
-  )
+source_peptide_header <- readWorkbook(
+  wb, main_sheet, rows = peptide_header_rows[[1]],
+  cols = seq_len(source_last_col), colNames = FALSE,
+  skipEmptyRows = FALSE, skipEmptyCols = FALSE
+)
+source_peptide_header_values <- as.character(unlist(
+  source_peptide_header[1, ], use.names = FALSE
+))
+source_columns <- setdiff(seq_len(source_last_col), existing_msstats_cols)
+normalize_header <- function(value) {
+  tolower(gsub("[^a-z0-9]", "", as.character(value)))
 }
+peptide_tail_names <- c(
+  "Positions in Proteins", "Quan Usage", "Quan Ratio Usage"
+)
+peptide_tail_columns <- source_columns[
+  normalize_header(source_peptide_header_values[source_columns]) %in%
+    normalize_header(peptide_tail_names)
+]
+core_source_columns <- setdiff(source_columns, peptide_tail_columns)
+core_header_values <- original_header_values[core_source_columns]
+peptide_tail_top_headers <- original_header_values[peptide_tail_columns]
+peptide_tail_headers <- source_peptide_header_values[peptide_tail_columns]
+core_original_table <- existing_table[, core_source_columns, drop = FALSE]
+peptide_tail_table <- existing_table[, peptide_tail_columns, drop = FALSE]
+source_header_values <- c(core_header_values, peptide_tail_top_headers)
+source_original_table <- cbind(core_original_table, peptide_tail_table)
+
+# Keep peptide-only hierarchy fields at the far right. This prevents their
+# corresponding empty protein cells from separating source metadata from the
+# appended MSstats results in the compact Proteins worksheet.
+start_col <- length(core_source_columns) + 1L
+last_msstats_col <- start_col + n_new_cols - 1L
+peptide_tail_start_col <- last_msstats_col + 1L
+final_last_col <- last_msstats_col + length(peptide_tail_columns)
+rewrite_last_col <- max(source_last_col, final_last_col)
+deleteData(
+  wb, main_sheet,
+  cols = seq.int(start_col, rewrite_last_col),
+  rows = seq_len(n_rows + 1L),
+  gridExpand = TRUE
+)
 writeData(
   wb, main_sheet, new_data[-1, , drop = FALSE], startCol = start_col,
   startRow = 2, colNames = FALSE, rowNames = FALSE, keepNA = FALSE
 )
 writeData(wb, main_sheet, t(protein_headers), startCol = start_col, startRow = 1, colNames = FALSE)
 writeData(wb, main_sheet, t(peptide_headers), startCol = start_col, startRow = 3, colNames = FALSE)
+if (length(peptide_tail_columns)) {
+  writeData(
+    wb, main_sheet, peptide_tail_table,
+    startCol = peptide_tail_start_col, startRow = 1,
+    colNames = FALSE, rowNames = FALSE, keepNA = FALSE
+  )
+}
 if (nrow(main_nonfinite_labels)) {
   main_excel_labels <- main_nonfinite_labels
   main_excel_labels$col <- start_col + main_excel_labels$col - 1L
@@ -742,23 +775,16 @@ peptide_number_style <- do.call(createStyle, c(base_font, list(
   borderColour = grid_colour, borderStyle = "thin", wrapText = TRUE
 )))
 
-last_output_col <- start_col + n_new_cols - 1L
 peptide_abundance_cols <- start_col + seq_len(2L * length(run_order)) - 1L
 
 # The reference workbook uses scientific notation for the peptide-level
 # probability/score block and for abundance values. Text cells in this range
 # are unaffected by the number format.
-base_peptide_header <- readWorkbook(
-  wb, main_sheet,
-  rows = peptide_header_rows[[1]], cols = seq_len(original_last_col),
-  colNames = FALSE, skipEmptyRows = FALSE, skipEmptyCols = FALSE
-)
-base_header_values <- as.character(unlist(base_peptide_header[1, ], use.names = FALSE))
 first_probability_col <- which(
-  grepl("^(q-?value|pep|svmscore)$", base_header_values, ignore.case = TRUE)
+  grepl("^(q-?value|pep|svmscore)$", core_header_values, ignore.case = TRUE)
 )[1]
 scientific_original_cols <- if (!is.na(first_probability_col)) {
-  seq.int(first_probability_col, original_last_col)
+  seq.int(first_probability_col, length(core_source_columns))
 } else {
   integer()
 }
@@ -783,18 +809,34 @@ scientific_protein_cols <- unlist(lapply(
 # Fixed column widths from the reference workbook. The frozen view is written
 # below after all worksheets have been created because openxlsx does not retain
 # freezePane() on some imported Proteome Discoverer worksheets.
-setColWidths(wb, main_sheet, cols = 1:original_last_col, widths = 12)
+setColWidths(wb, main_sheet, cols = seq_along(core_source_columns), widths = 12)
 wide_original_cols <- which(
   grepl(
     "Description|Biological Process|Cellular Component|Molecular Function|Positions in Proteins",
-    original_header_values,
+    core_header_values,
     ignore.case = TRUE
-  ) & seq_along(original_header_values) <= original_last_col
+  )
 )
 if (length(wide_original_cols)) {
   setColWidths(wb, main_sheet, cols = wide_original_cols, widths = 40)
 }
-setColWidths(wb, main_sheet, cols = start_col:last_output_col, widths = 13)
+setColWidths(wb, main_sheet, cols = start_col:last_msstats_col, widths = 13)
+if (length(peptide_tail_columns)) {
+  setColWidths(
+    wb, main_sheet,
+    cols = peptide_tail_start_col:final_last_col, widths = 12
+  )
+  wide_peptide_tail_cols <- which(grepl(
+    "Positions in Proteins", peptide_tail_headers, ignore.case = TRUE
+  ))
+  if (length(wide_peptide_tail_cols)) {
+    setColWidths(
+      wb, main_sheet,
+      cols = peptide_tail_start_col + wide_peptide_tail_cols - 1L,
+      widths = 40
+    )
+  }
+}
 
 # Header and hierarchy row heights mirror the reference layout.
 setRowHeights(wb, main_sheet, rows = 1, heights = 135)
@@ -810,14 +852,14 @@ if (length(long_description_rows)) {
 # Apply the reference hierarchy palette continuously across the worksheet.
 # This includes collapsed peptide rows, so expanding a protein group does not
 # reveal a differently coloured section at the MSstats join.
-addStyle(wb, main_sheet, column_header_style, rows = 1, cols = 1:last_output_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, protein_row_style, rows = protein_display_rows, cols = 1:last_output_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, protein_number_style, rows = protein_display_rows, cols = start_col:last_output_col, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, column_header_style, rows = 1, cols = 1:final_last_col, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, protein_row_style, rows = protein_display_rows, cols = 1:final_last_col, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, protein_number_style, rows = protein_display_rows, cols = start_col:last_msstats_col, gridExpand = TRUE, stack = FALSE)
 addStyle(wb, main_sheet, protein_scientific_style, rows = protein_display_rows, cols = scientific_protein_cols, gridExpand = TRUE, stack = FALSE)
 # Keep each collapsed peptide section visually continuous through the final
 # column, including protein-only fields where peptide rows contain no value.
-addStyle(wb, main_sheet, peptide_header_style, rows = peptide_header_rows, cols = 1:last_output_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, peptide_row_style, rows = peptide_rows, cols = 1:last_output_col, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, peptide_header_style, rows = peptide_header_rows, cols = 1:final_last_col, gridExpand = TRUE, stack = FALSE)
+addStyle(wb, main_sheet, peptide_row_style, rows = peptide_rows, cols = 1:final_last_col, gridExpand = TRUE, stack = FALSE)
 addStyle(wb, main_sheet, peptide_number_style, rows = peptide_rows, cols = scientific_peptide_cols, gridExpand = TRUE, stack = FALSE)
 
 description <- as.character(meta[[4]][protein_rows])
@@ -980,7 +1022,9 @@ guide <- data.frame(
     paste0(
       "Hierarchical Proteome Discoverer view containing protein rows, protein ",
       "candidate rows, peptide headers, and peptide rows. Peptide sections retain ",
-      "their source grouping and collapsed-row behavior."
+      "their source grouping and collapsed-row behavior. Positions in Proteins, ",
+      "Quan Usage, and Quan Ratio Usage are kept together at the far right because ",
+      "they apply only to peptide rows."
     ),
     "Sum of positive PDtoMSstatsFormat feature intensities for a protein-peptide-run across precursor charge states; linear scale.",
     paste0(
@@ -1059,23 +1103,27 @@ if (protein_sheet %in% names(wb)) removeWorksheet(wb, protein_sheet)
 addWorksheet(wb, protein_sheet)
 
 protein_sort_order <- protein_worksheet_order(
-  original_header_values[seq_len(original_last_col)],
-  original_table[protein_display_rows, , drop = FALSE],
+  source_header_values,
+  source_original_table[protein_display_rows, , drop = FALSE],
   new_data[protein_display_rows, , drop = FALSE]
 )
 protein_display_rows <- protein_display_rows[protein_sort_order]
-protein_original_data <- original_table[protein_display_rows, , drop = FALSE]
+protein_core_data <- core_original_table[protein_display_rows, , drop = FALSE]
 protein_msstats_data <- new_data[protein_display_rows, , drop = FALSE]
+protein_peptide_tail_data <- peptide_tail_table[
+  protein_display_rows, , drop = FALSE
+]
 protein_only_headers <- c(
-  original_header_values[seq_len(original_last_col)],
-  protein_headers
+  core_header_values,
+  protein_headers,
+  peptide_tail_top_headers
 )
 writeData(
   wb, protein_sheet, t(protein_only_headers),
   startRow = 1L, startCol = 1L, colNames = FALSE, rowNames = FALSE
 )
 writeData(
-  wb, protein_sheet, protein_original_data,
+  wb, protein_sheet, protein_core_data,
   startRow = 2L, startCol = 1L, colNames = FALSE, rowNames = FALSE,
   keepNA = FALSE
 )
@@ -1084,6 +1132,13 @@ writeData(
   startRow = 2L, startCol = start_col, colNames = FALSE, rowNames = FALSE,
   keepNA = FALSE
 )
+if (length(peptide_tail_columns)) {
+  writeData(
+    wb, protein_sheet, protein_peptide_tail_data,
+    startRow = 2L, startCol = peptide_tail_start_col,
+    colNames = FALSE, rowNames = FALSE, keepNA = FALSE
+  )
+}
 
 if (nrow(main_nonfinite_labels)) {
   protein_nonfinite_labels <- main_nonfinite_labels
@@ -1098,15 +1153,23 @@ if (nrow(main_nonfinite_labels)) {
   write_excel_labels(wb, protein_sheet, protein_nonfinite_labels)
 }
 
-addFilter(wb, protein_sheet, rows = 1L, cols = seq_len(last_output_col))
+addFilter(wb, protein_sheet, rows = 1L, cols = seq_len(final_last_col))
 freezePane(wb, protein_sheet, firstActiveRow = 2L, firstActiveCol = 5L)
-setColWidths(wb, protein_sheet, cols = 1:original_last_col, widths = 12)
+setColWidths(
+  wb, protein_sheet, cols = seq_along(core_source_columns), widths = 12
+)
 if (length(wide_original_cols)) {
   setColWidths(wb, protein_sheet, cols = wide_original_cols, widths = 40)
 }
 setColWidths(
-  wb, protein_sheet, cols = start_col:last_output_col, widths = 13
+  wb, protein_sheet, cols = start_col:last_msstats_col, widths = 13
 )
+if (length(peptide_tail_columns)) {
+  setColWidths(
+    wb, protein_sheet,
+    cols = peptide_tail_start_col:final_last_col, widths = 12
+  )
+}
 setRowHeights(wb, protein_sheet, rows = 1L, heights = 135)
 protein_only_rows <- seq_len(length(protein_display_rows)) + 1L
 setRowHeights(wb, protein_sheet, rows = protein_only_rows, heights = 30)
@@ -1121,17 +1184,17 @@ if (length(protein_only_long_rows)) {
 }
 addStyle(
   wb, protein_sheet, column_header_style,
-  rows = 1L, cols = seq_len(last_output_col),
+  rows = 1L, cols = seq_len(final_last_col),
   gridExpand = TRUE, stack = FALSE
 )
 addStyle(
   wb, protein_sheet, protein_row_style,
-  rows = protein_only_rows, cols = seq_len(last_output_col),
+  rows = protein_only_rows, cols = seq_len(final_last_col),
   gridExpand = TRUE, stack = FALSE
 )
 addStyle(
   wb, protein_sheet, protein_number_style,
-  rows = protein_only_rows, cols = start_col:last_output_col,
+  rows = protein_only_rows, cols = start_col:last_msstats_col,
   gridExpand = TRUE, stack = FALSE
 )
 addStyle(
@@ -1151,7 +1214,7 @@ add_protein_log2fc_gradient(
 main_sheet_index <- match(main_sheet, names(wb))
 wb$worksheets[[main_sheet_index]]$dimension <- sprintf(
   "<dimension ref=\"A1:%s%d\"/>",
-  int2col(start_col + n_new_cols - 1L),
+  int2col(final_last_col),
   n_rows + 1L
 )
 current_sheet_names <- names(wb)

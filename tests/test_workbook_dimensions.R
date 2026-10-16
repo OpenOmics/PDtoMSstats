@@ -83,18 +83,27 @@ fixture_input <- file.path(fixture_dir, "input.xlsx")
 fixture_objects <- file.path(fixture_dir, "objects.rds")
 fixture <- openxlsx::createWorkbook()
 openxlsx::addWorksheet(fixture, "Proteins")
-source_headers <- c("Role", "Confidence", "Accession", "Description", "# PSMs", "PD log2FC")
+peptide_tail_headers <- c(
+  "Positions in Proteins", "Quan Usage", "Quan Ratio Usage"
+)
+source_headers <- c(
+  "Role", "Confidence", "Accession", "Description", "# PSMs", "PD log2FC",
+  rep(NA_character_, length(peptide_tail_headers))
+)
 source_rows <- list(source_headers)
 for (index in seq_len(4L)) {
   source_rows <- c(source_rows, list(
     c("Master Protein", "High", paste0("P", index), paste("Protein", index),
-      c("20", "30", "10", NA_character_)[index], "1"),
-    c(NA, "Confidence", "Accession", "Sequence", NA, NA),
-    c(NA, "High", NA, "PEPTIDE", NA, NA)
+      c("20", "30", "10", NA_character_)[index], "1", NA, NA, NA),
+    c(NA, "Confidence", "Accession", "Sequence", NA, NA,
+      peptide_tail_headers),
+    c(NA, "High", NA, "PEPTIDE", NA, NA,
+      "[1-7]", "Used (Top N)", "Used")
   ))
 }
 source_rows <- c(source_rows, list(
-  c("Master Protein Candidate", "High", "C1", "Candidate", "100", "-1")
+  c("Master Protein Candidate", "High", "C1", "Candidate", "100", "-1",
+    NA, NA, NA)
 ))
 openxlsx::writeData(fixture, "Proteins", do.call(rbind, source_rows), colNames = FALSE)
 openxlsx::saveWorkbook(fixture, fixture_input)
@@ -143,6 +152,25 @@ stopifnot(
 )
 peptide <- openxlsx::read.xlsx(single_output, sheet = "Peptide", check.names = FALSE, sep.names = " ")
 stopifnot(identical(peptide$Accession[peptide$Role %in% "Master Protein"], paste0("P", 1:4)))
+single_last_col <- ncol(peptide)
+tail_columns <- seq.int(single_last_col - length(peptide_tail_headers) + 1L, single_last_col)
+single_peptide_raw <- openxlsx::read.xlsx(
+  single_output, sheet = "Peptide", rows = 1:4,
+  cols = seq_len(single_last_col), colNames = FALSE,
+  skipEmptyRows = FALSE, skipEmptyCols = FALSE
+)
+stopifnot(
+  identical(ncol(single), single_last_col - length(peptide_tail_headers)),
+  identical(grep("^MSstats ", names(single)), 7:22),
+  identical(
+    as.character(unlist(single_peptide_raw[3, tail_columns], use.names = FALSE)),
+    peptide_tail_headers
+  ),
+  identical(
+    as.character(unlist(single_peptide_raw[4, tail_columns], use.names = FALSE)),
+    c("[1-7]", "Used (Top N)", "Used")
+  )
+)
 single_wb <- openxlsx::loadWorkbook(single_output)
 protein_sheet_index <- match("Proteins", names(single_wb))
 protein_xml <- paste(
@@ -154,6 +182,39 @@ stopifnot(
   grepl('type="num" val="0"', protein_xml, fixed = TRUE),
   grepl("FF2166AC", protein_xml, fixed = TRUE),
   grepl("FFB2182B", protein_xml, fixed = TRUE)
+)
+
+# Re-exporting an already augmented workbook must replace the MSstats block
+# without duplicating or displacing the peptide-only tail columns.
+single_rerun_output <- file.path(fixture_dir, "single-rerun.xlsx")
+export_msstats_workbook(
+  single_output, fixture_objects, fixture_dir, single_rerun_output
+)
+single_rerun <- openxlsx::read.xlsx(
+  single_rerun_output, sheet = "Proteins", check.names = FALSE, sep.names = " "
+)
+single_rerun_peptide <- openxlsx::read.xlsx(
+  single_rerun_output, sheet = "Peptide", check.names = FALSE, sep.names = " "
+)
+single_rerun_last_col <- ncol(single_rerun_peptide)
+single_rerun_peptide_raw <- openxlsx::read.xlsx(
+  single_rerun_output, sheet = "Peptide", rows = 1:4,
+  cols = seq_len(single_rerun_last_col), colNames = FALSE,
+  skipEmptyRows = FALSE, skipEmptyCols = FALSE
+)
+rerun_tail_columns <- seq.int(
+  single_rerun_last_col - length(peptide_tail_headers) + 1L,
+  single_rerun_last_col
+)
+stopifnot(
+  identical(single_rerun_last_col, single_last_col),
+  identical(grep("^MSstats ", names(single_rerun)), 7:22),
+  identical(
+    as.character(unlist(
+      single_rerun_peptide_raw[3, rerun_tail_columns], use.names = FALSE
+    )),
+    peptide_tail_headers
+  )
 )
 
 # Multiple comparisons use PSM counts, including master-protein candidates.
@@ -171,4 +232,4 @@ stopifnot(
   isTRUE(all.equal(as.numeric(multi[["MSstats Other_vs_Control: Ratio"]][2:3]), c(0.001, 1000)))
 )
 
-cat("Workbook dimensions, GSEA diagnostics, fold-change cap, sorting, and gradients: PASS\n")
+cat("Workbook dimensions, peptide-tail layout, GSEA diagnostics, fold-change cap, sorting, and gradients: PASS\n")

@@ -81,6 +81,10 @@ The workbook uses a consistent hierarchy:
   comparison; for multiple comparisons, by descending source PSM count.
   Missing sort values are last and ties keep source order. If no PSM count
   column exists, source order is retained with a warning.
+- The peptide-only `Positions in Proteins`, `Quan Usage`, and
+  `Quan Ratio Usage` columns are placed at the far right of both hierarchy
+  views. Their values remain on peptide rows, while the corresponding empty
+  protein cells no longer interrupt the metadata and MSstats result columns.
 - Blue–white–red gradients on the `Proteins` log2FC columns, centered at zero
   with symmetric endpoints of `-/+ log2(maximum_allowed_fold_change)`.
 - Non-finite statistical values written as `NA`, `Inf`, or `-Inf`, rather than
