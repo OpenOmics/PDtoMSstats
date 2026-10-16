@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+# Authors: Subrata Paul and Kevin Cormier
 
 calculate_unnormalized_msstats_protein_abundance <- function(input_file, output_file) {
 input_file <- normalizePath(input_file, winslash = "/", mustWork = TRUE)

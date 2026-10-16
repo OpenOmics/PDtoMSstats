@@ -22,6 +22,7 @@ pdt_option_spec <- function() {
     "contrast-file", "protein-workbook", "excel-output",
     "organism-package", "cores", "filter-confidence", "normalization",
     "summary-method", "de-pvalue-cutoff", "de-log2fc-cutoff",
+    "maximum-allowed-fold-change",
     "gsea-pvalue-cutoff",
     "psm-file-id-column", "psm-sequence-column",
     "psm-charge-column", "psm-protein-column", "psm-intensity-column",
@@ -29,7 +30,8 @@ pdt_option_spec <- function() {
     "bioreplicate-column", "condition-column", "extra-qmd",
     "report-template", "timecourse-config", "time-column", "group-column",
     "reference-group", "comparison-group", "time-unit", "min-replicates",
-    "polynomial-degree", "model-fdr", "coefficient-alpha",
+    "polynomial-degree", "spline-df", "model-fdr",
+    "limma-interaction-fdr", "coefficient-alpha",
     "min-r-squared", "min-clusters", "max-clusters",
     "cluster-diagnostic-repeats", "core-membership",
     "timecourse-extra-qmd", "timecourse-template"
@@ -173,6 +175,7 @@ pdt_main_defaults <- function() {
     volcano_fc_cutoff = 1,
     differential_pvalue_cutoff = NULL,
     differential_log2fc_cutoff = NULL,
+    maximum_allowed_fold_change = 100,
     volcano_top_labels = 10,
     volcano_split_axis_quantile = 0.95,
     volcano_split_axis_min_ratio = 1.8,
@@ -209,7 +212,9 @@ pdt_timecourse_defaults <- function() {
     time_unit = 24,
     min_replicates_per_cell = 4,
     polynomial_degree = 3,
+    spline_df = 3,
     model_fdr = 0.05,
+    limma_interaction_fdr = 0.05,
     coefficient_alpha = 0.05,
     min_r_squared = 0.60,
     min_clusters = 2,
@@ -413,6 +418,7 @@ pdt_apply_cli_to_main <- function(config, options, provided) {
     summary_method = "summary_method",
     de_pvalue_cutoff = "differential_pvalue_cutoff",
     de_log2fc_cutoff = "differential_log2fc_cutoff",
+    maximum_allowed_fold_change = "maximum_allowed_fold_change",
     gsea_pvalue_cutoff = "gsea_pvalue_cutoff",
     psm_file_id_column = "psm_file_id_column",
     psm_sequence_column = "psm_sequence_column",
@@ -685,6 +691,10 @@ pdt_prepare_main_config <- function(options, provided, project_root,
     minimum = 0,
     maximum = 1
   )
+  config$maximum_allowed_fold_change <- pdt_numeric(
+    config$maximum_allowed_fold_change,
+    "maximum_allowed_fold_change", minimum = 1
+  )
   config$qc_max_plot_rows <- pdt_numeric(
     config$qc_max_plot_rows, "qc_max_plot_rows", integer = TRUE, minimum = 1000
   )
@@ -700,7 +710,9 @@ pdt_apply_cli_to_timecourse <- function(config, options, provided) {
     time_unit = "time_unit",
     min_replicates = "min_replicates_per_cell",
     polynomial_degree = "polynomial_degree",
+    spline_df = "spline_df",
     model_fdr = "model_fdr",
+    limma_interaction_fdr = "limma_interaction_fdr",
     coefficient_alpha = "coefficient_alpha",
     min_r_squared = "min_r_squared",
     min_clusters = "min_clusters",
@@ -830,7 +842,16 @@ pdt_prepare_timecourse_config <- function(main_config, annotation, options,
   config$polynomial_degree <- pdt_numeric(
     config$polynomial_degree, "polynomial_degree", integer = TRUE, minimum = 1
   )
+  config$spline_df <- pdt_numeric(
+    config$spline_df, "spline_df", integer = TRUE, minimum = 1
+  )
   config$model_fdr <- pdt_numeric(config$model_fdr, "model_fdr", minimum = 0, maximum = 1)
+  config$limma_interaction_fdr <- pdt_numeric(
+    config$limma_interaction_fdr,
+    "limma_interaction_fdr",
+    minimum = 0,
+    maximum = 1
+  )
   config$coefficient_alpha <- pdt_numeric(
     config$coefficient_alpha, "coefficient_alpha", minimum = 0, maximum = 1
   )

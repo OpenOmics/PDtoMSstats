@@ -3,7 +3,8 @@
 PDtoMSstats is a configuration-driven workflow that takes Proteome Discoverer
 PSM data through quality control, MSstats protein summarization and planned
 comparisons, optional formatted Excel export, and independent-sample
-time-course analysis with maSigPro and Mfuzz.
+time-course analysis with orthogonal-polynomial maSigPro, limma natural
+splines, and method-specific Mfuzz clustering.
 
 Docker is the recommended way to run the workflow. The same image is used on
 Linux, Windows, Intel macOS, and Apple Silicon macOS, so users do not need to
@@ -34,7 +35,7 @@ flowchart LR
     CFG[YAML configuration] --> MAIN
     MAIN --> HTML[Self-contained HTML]
     MAIN --> TABLES[CSV and RDS outputs]
-    TABLES --> TIME[maSigPro and Mfuzz]
+    TABLES --> TIME[maSigPro, limma splines, and Mfuzz]
     TIME --> THTML[Time-course HTML and tables]
     PROTEIN[Optional PD protein workbook] --> XLSX[Formatted workbook]
     TABLES --> XLSX
@@ -123,8 +124,9 @@ singularity exec \
   Rscript scripts/run_pipeline.R config/local-my-project.yml
 ```
 
-Add the time-course configuration as the second argument to run maSigPro and
-Mfuzz after MSstats:
+Add the time-course configuration as the second argument to run
+orthogonal-polynomial maSigPro, limma natural splines, and method-specific
+Mfuzz analyses after MSstats:
 
 ```bash
 singularity exec \
@@ -240,9 +242,10 @@ docker compose run --rm pdtomsstats \
   config/local-my-project-timecourse.yml
 ```
 
-It performs balanced group-by-time coverage filtering, polynomial maSigPro
-regression, explicit group-by-time interaction selection, and Mfuzz soft
-clustering of the comparison-minus-reference effect trajectories. See the
+It performs balanced group-by-time coverage filtering, orthogonal-polynomial
+maSigPro regression, a moderated limma natural-spline interaction test, a
+combined significant-protein table, and separate Mfuzz clustering of each
+model's comparison-minus-reference effect trajectories. See the
 [time-course guide](docs/timecourse.md).
 
 ## Optional formatted workbook

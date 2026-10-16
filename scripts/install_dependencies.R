@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+# Authors: Subrata Paul and Kevin Cormier
 
 install_cores <- suppressWarnings(as.integer(Sys.getenv(
   "PDTOMSTATS_INSTALL_CORES", unset = "2"

@@ -51,6 +51,21 @@ p-value below `0.05` and absolute log2 fold change of at least `1`). Set
 the wrapper flags `--de-pvalue-cutoff` and `--de-log2fc-cutoff`, to change the
 Excel filters without changing the volcano plots.
 
+Set `maximum_allowed_fold_change: 100` in the main YAML configuration, or use
+`--maximum-allowed-fold-change 100` with `pdtomsstats run`, to control the
+exported MSstats Ratio and log2FC in the `Proteins` and `Peptide` views. The
+default is 100: ratios are bounded by 0.01 and 100 and log2FC by approximately
+-6.643856 and +6.643856. Infinite estimates and finite estimates beyond the
+limits are capped; missing estimates remain missing. The limit must be finite
+and at least 1. These are reporting bounds, not measured fold changes.
+
+The cap does not alter the model, p-values, CSV/RDS results, `All MSstats
+Results`, or DE-sheet estimates and selection. Those retain the original
+model results. Original PD columns are preserved. The workbook export guide
+records the selected cap. Older saved analysis objects without this setting
+use 100; `export_msstats_workbook()` also accepts a named
+`maximum_allowed_fold_change` override when re-exporting saved results.
+
 ## Formatting
 
 The workbook uses a consistent hierarchy:
@@ -62,6 +77,12 @@ The workbook uses a consistent hierarchy:
 - Scientific notation for abundance and probability fields where appropriate.
 - Fixed widths for the first metadata columns.
 - Frozen row 1 and columns A through D on both `Proteins` and `Peptide`.
+- Protein rows sorted by descending signed MSstats log2FC for a single
+  comparison; for multiple comparisons, by descending source PSM count.
+  Missing sort values are last and ties keep source order. If no PSM count
+  column exists, source order is retained with a warning.
+- Blue–white–red gradients on the `Proteins` log2FC columns, centered at zero
+  with symmetric endpoints of `-/+ log2(maximum_allowed_fold_change)`.
 - Non-finite statistical values written as `NA`, `Inf`, or `-Inf`, rather than
   Excel numeric-error cells.
 

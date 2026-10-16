@@ -2,7 +2,9 @@ Package: PDtoMSstats
 Type: Project
 Title: Proteome Discoverer PSM to MSstats Workflow
 Version: 0.1.2
-Authors@R: person("Kevin", "Cormier", role = c("aut", "cre"))
+Authors@R: c(
+    person("Subrata", "Paul", role = "aut"),
+    person("Kevin", "Cormier", role = c("aut", "cre")))
 Description: Configuration-driven quality control, MSstats differential
     analysis, formatted workbook export, and maSigPro/Mfuzz time-course
     analysis for Proteome Discoverer PSM data.
@@ -21,6 +23,7 @@ Imports:
     ggplot2,
     ggrepel,
     htmltools,
+    jsonlite,
     knitr,
     maSigPro,
     Mfuzz,

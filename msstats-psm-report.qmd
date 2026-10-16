@@ -3,6 +3,7 @@ title: "MSstats PSM-Level Proteomics Analysis"
 lightbox: true
 subtitle: "Reusable analysis driven by PSM and annotation files"
 author:
+  - Subrata Paul
   - Kevin Cormier
 date: today
 title-block-banner: "#27445C"
@@ -75,6 +76,7 @@ params:
   volcano_fc_cutoff: 1
   differential_pvalue_cutoff: null
   differential_log2fc_cutoff: null
+  maximum_allowed_fold_change: 100
   volcano_top_labels: 10
   volcano_split_axis_quantile: 0.95
   volcano_split_axis_min_ratio: 1.8
@@ -205,6 +207,14 @@ if (
     differential_log2fc_cutoff < 0
 ) {
   stop("differential_log2fc_cutoff must be nonnegative.", call. = FALSE)
+}
+if (
+  length(params$maximum_allowed_fold_change) != 1L ||
+    !is.numeric(params$maximum_allowed_fold_change) ||
+    !is.finite(params$maximum_allowed_fold_change) ||
+    params$maximum_allowed_fold_change < 1
+) {
+  stop("maximum_allowed_fold_change must be finite and at least 1.", call. = FALSE)
 }
 source(file.path(report_dir, "R", "pathway-analysis-functions.R"), local = knitr::knit_global())
 source(file.path(report_dir, "R", "contrast-functions.R"), local = knitr::knit_global())
@@ -1560,6 +1570,7 @@ saveRDS(
       number_of_cores = params$number_of_cores,
       differential_fdr_cutoff = differential_pvalue_cutoff,
       differential_log2fc_cutoff = differential_log2fc_cutoff,
+      maximum_allowed_fold_change = params$maximum_allowed_fold_change,
       organism_package = params$organism_package,
       contrast_file = if (has_contrast_file) params$contrast_file else NULL
     )

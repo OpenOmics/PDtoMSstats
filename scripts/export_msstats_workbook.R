@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+# Authors: Subrata Paul and Kevin Cormier
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -13,6 +14,53 @@ preferred_protein_sheet <- function(workbook) {
   if ("All_conditions Filtered" %in% sheet_names) return("All_conditions Filtered")
   if ("Proteins" %in% sheet_names) return("Proteins")
   sheet_names[[1]]
+}
+
+validate_fold_change_limit <- function(value) {
+  if (length(value) != 1L || !is.numeric(value) ||
+      !is.finite(value) || value < 1) {
+    stop("maximum_allowed_fold_change must be finite and at least 1.", call. = FALSE)
+  }
+  as.numeric(value)
+}
+
+cap_workbook_fold_changes <- function(values, maximum_allowed_fold_change = 100) {
+  limit <- log2(validate_fold_change_limit(maximum_allowed_fold_change))
+  # Preserve NA/NaN and the sign of infinite estimates.
+  pmax(-limit, pmin(limit, values))
+}
+
+protein_worksheet_order <- function(headers, original_data, msstats_data) {
+  log2fc_columns <- grep(": log2FC$", names(msstats_data))
+  psm_columns <- which(tolower(gsub("[^a-z0-9]", "", tolower(headers))) %in%
+    c("psm", "psms", "numberofpsms", "psmcount"))
+  if (length(log2fc_columns) == 1L) {
+    key <- msstats_data[[log2fc_columns]]
+  } else if (length(psm_columns)) {
+    key <- suppressWarnings(as.numeric(gsub(
+      ",", "", as.character(original_data[[psm_columns[[1L]]]]), fixed = TRUE
+    )))
+  } else {
+    warning("No PSM count column found; retaining source protein order.", call. = FALSE)
+    return(seq_len(nrow(original_data)))
+  }
+  order(-key, seq_along(key), na.last = TRUE)
+}
+
+add_protein_log2fc_gradient <- function(workbook, sheet, headers, rows, limit) {
+  # Include both the appended MSstats columns and source PD log2FC columns.
+  normalized <- tolower(gsub("[^a-z0-9]", "", tolower(headers)))
+  columns <- which(grepl("log2fc|log2foldchange", normalized))
+  if (!length(rows)) return(invisible(workbook))
+  bound <- max(log2(validate_fold_change_limit(limit)), 1e-6)
+  for (column in columns) {
+    conditionalFormatting(
+      workbook, sheet, cols = column, rows = rows,
+      type = "colourScale", style = c("#2166AC", "#FFFFFF", "#B2182B"),
+      rule = c(-bound, 0, bound)
+    )
+  }
+  invisible(workbook)
 }
 
 excel_nonfinite_label <- function(value) {
@@ -263,7 +311,8 @@ gsea_workbook_table <- function(results_dir, comparison_label) {
 }
 
 export_msstats_workbook <- function(
-  input_file, objects_file, results_dir, output_file = NULL
+  input_file, objects_file, results_dir, output_file = NULL,
+  maximum_allowed_fold_change = NULL
 ) {
 input_file <- normalizePath(input_file, winslash = "/", mustWork = TRUE)
 objects_file <- normalizePath(objects_file, winslash = "/", mustWork = TRUE)
@@ -327,6 +376,11 @@ source_analysis_description <- paste0(
 )
 
 settings <- objects$analysis_settings
+if (is.null(maximum_allowed_fold_change)) {
+  maximum_allowed_fold_change <- settings$maximum_allowed_fold_change
+}
+if (is.null(maximum_allowed_fold_change)) maximum_allowed_fold_change <- 100
+maximum_allowed_fold_change <- validate_fold_change_limit(maximum_allowed_fold_change)
 normalization_method <- if (!is.null(settings$normalization)) {
   settings$normalization
 } else {
@@ -552,11 +606,16 @@ new_data[group_cols] <- lapply(seq_along(group_cols), function(j) {
 })
 
 comparisons[, Ratio := 2^log2FC]
+display_comparisons <- copy(comparisons)
+display_comparisons[, log2FC := cap_workbook_fold_changes(
+  log2FC, maximum_allowed_fold_change
+)]
+display_comparisons[, Ratio := 2^log2FC]
 stats_start <- max(group_cols) + 1L
 main_nonfinite_labels <- list()
 for (comparison_i in seq_along(comparison_order)) {
   label <- comparison_order[[comparison_i]]
-  result <- comparisons[Label == label]
+  result <- display_comparisons[Label == label]
   result_idx <- match(protein_accessions, result$Protein)
   col_start <- stats_start + (comparison_i - 1L) * length(stat_fields)
   for (field_i in seq_along(stat_fields)) {
@@ -913,7 +972,10 @@ guide <- data.frame(
     paste0(
       "Protein-only view containing Master Protein and Master Protein Candidate ",
       "rows from the source workbook. MSstats values are present where the ",
-      "source accession exactly matches a modeled master protein."
+      "source accession exactly matches a modeled master protein. Sorted by ",
+      "descending MSstats log2FC for one comparison, otherwise descending PSM count; ",
+      "missing sort values are last. log2FC colors are blue (negative), white ",
+      "(zero), and red (positive)."
     ),
     paste0(
       "Hierarchical Proteome Discoverer view containing protein rows, protein ",
@@ -940,7 +1002,14 @@ guide <- data.frame(
       paste(group_order, collapse = ", "), "; log2 scale."
     ),
     paste0(
-      "2 raised to the MSstats log2FC. Remaining fields are copied from ",
+      "Protein/Peptide views: exported MSstats log2FC is capped to +/- log2(",
+      maximum_allowed_fold_change, ") = +/- ",
+      signif(log2(maximum_allowed_fold_change), 7),
+      "; Ratio is 2 raised to that displayed log2FC, bounded by ",
+      1 / maximum_allowed_fold_change, " and ", maximum_allowed_fold_change,
+      ". Includes infinite and finite estimates outside the limits; capped ",
+      "values are reporting boundaries, not exact measured fold changes. ",
+      "Original PD columns are retained. Remaining fields are copied from ",
       "groupComparison, including uncertainty, p-values, missingness, imputation, ",
       "and issue flags. Non-finite values are displayed as NA, Inf, or -Inf so ",
       "Excel does not display numeric error cells."
@@ -952,13 +1021,14 @@ guide <- data.frame(
     ),
     paste0(
       "Complete MSstats groupComparison output for every modeled protein and every ",
-      "contrast. This includes results that cannot be joined to an exact master-protein ",
+      "contrast, with uncapped log2FC and Ratio. This includes results that cannot be joined to an exact master-protein ",
       "row in the source workbook."
     ),
     paste0(
       "Proteins with adjusted p-value < ", fdr_cutoff,
       " and absolute log2FC >= ", log2fc_cutoff,
-      ", one worksheet per contrast."
+      ", one worksheet per contrast. Selection and estimates use uncapped model ",
+      "results, not the Protein/Peptide display cap."
     ),
     "Complete GO Biological Process GSEA result table produced by the report, one worksheet per contrast."
   ),
@@ -988,6 +1058,12 @@ protein_sheet <- "Proteins"
 if (protein_sheet %in% names(wb)) removeWorksheet(wb, protein_sheet)
 addWorksheet(wb, protein_sheet)
 
+protein_sort_order <- protein_worksheet_order(
+  original_header_values[seq_len(original_last_col)],
+  original_table[protein_display_rows, , drop = FALSE],
+  new_data[protein_display_rows, , drop = FALSE]
+)
+protein_display_rows <- protein_display_rows[protein_sort_order]
 protein_original_data <- original_table[protein_display_rows, , drop = FALSE]
 protein_msstats_data <- new_data[protein_display_rows, , drop = FALSE]
 protein_only_headers <- c(
@@ -1062,6 +1138,11 @@ addStyle(
   wb, protein_sheet, protein_scientific_style,
   rows = protein_only_rows, cols = scientific_protein_cols,
   gridExpand = TRUE, stack = FALSE
+)
+
+add_protein_log2fc_gradient(
+  wb, protein_sheet, protein_only_headers, protein_only_rows,
+  maximum_allowed_fold_change
 )
 
 # openxlsx intentionally resets the worksheet dimension when loading. Restore

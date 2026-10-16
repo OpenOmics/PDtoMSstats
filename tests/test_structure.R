@@ -86,16 +86,31 @@ timecourse_qmd <- readLines(
   warn = FALSE
 )
 required_timecourse_text <- c(
-  "maSigPro::make.design.matrix",
+  "stats::poly",
   "maSigPro::p.vector",
   "maSigPro::T.fit",
-  "Mfuzz::mestimate",
-  "Mfuzz::Dmin",
-  "Mfuzz::cselection",
-  "Mfuzz::mfuzz",
+  "limma::lmFit",
+  "limma::eBayes",
+  "limma_interaction_fdr",
+  "timecourse_combined_significant_proteins.csv",
+  "combined_interpretation_results",
+  "TrajectorySummary",
+  "SignificanceCategory",
+  "mfuzz_method_parameter_comparison.csv",
+  "fit_method_mfuzz",
+  "Column meanings and interpretation",
+  "describe_timecourse_column",
+  "html-math-method: mathml",
+  "t = \\frac{\\text{hour}",
+  "\\Delta_t = \\overline{y}",
   "Detailed methods",
-  "timecourse_group_difference_effects.csv",
-  "additional-timecourse-sections"
+  "additional-timecourse-sections",
+  "prepare-trajectory-explorer",
+  "trajectory-explorer-data",
+  "trajectory-dashboard-script",
+  "trajectory-protein-search",
+  "renderChart",
+  "trajectory-card-grid"
 )
 for (text in required_timecourse_text) {
   if (!any(grepl(text, timecourse_qmd, fixed = TRUE))) {
@@ -103,8 +118,29 @@ for (text in required_timecourse_text) {
   }
 }
 
+if (any(grepl("```{ojs}", timecourse_qmd, fixed = TRUE)) ||
+    any(grepl("ojs_define", timecourse_qmd, fixed = TRUE))) {
+  stop(
+    "The standalone time-course report must not use OJS because OJS is disabled for file:// URLs.",
+    call. = FALSE
+  )
+}
+
 if (any(grepl("LGTV", timecourse_qmd, fixed = TRUE))) {
   stop("The generalized time-course report still contains an LGTV-specific label.", call. = FALSE)
+}
+if (sum(grepl("^column_guide\\(", timecourse_qmd)) < 13L) {
+  stop(
+    "Every displayed time-course table must have a column-guide dropdown.",
+    call. = FALSE
+  )
+}
+if (any(grepl("\\[", timecourse_qmd, fixed = TRUE)) ||
+    any(grepl("\\(", timecourse_qmd, fixed = TRUE))) {
+  stop(
+    "The time-course report uses unsupported backslash-delimited math.",
+    call. = FALSE
+  )
 }
 
 dockerfile <- readLines(file.path(repo_root, "Dockerfile"), warn = FALSE)

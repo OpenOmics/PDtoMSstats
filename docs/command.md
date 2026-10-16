@@ -82,6 +82,16 @@ The resolved values are recorded as `differential_pvalue_cutoff` and
 `differential_log2fc_cutoff`. The p-value flag applies to the MSstats
 Benjamini-Hochberg adjusted p-value.
 
+### Set the Excel fold-change reporting limit
+
+Use `--maximum-allowed-fold-change 100` (the default) or set
+`maximum_allowed_fold_change: 100` in YAML. This bounds the appended Ratio and
+log2FC in the protein/peptide workbook views to `[0.01, 100]` and
+approximately `[-6.643856, 6.643856]`. Infinite estimates and finite values
+outside the bounds are capped for these views. Model results, CSV/RDS files,
+DE worksheets, and `All MSstats Results` retain the original estimates.
+See [workbook export](workbook-export.md) for sorting and gradient details.
+
 ### Set the GSEA result-table threshold
 
 The GSEA result cutoff defaults to `0.05`. Override it independently with:
@@ -157,8 +167,15 @@ column, reference group, and comparison group:
   --comparison-group LGTV
 ```
 
-The current maSigPro and Mfuzz report is for independent samples. It stops if
-biological replicate identifiers repeat across time points.
+The time-course report fits orthogonal-polynomial maSigPro and limma natural
+splines, then runs Mfuzz independently on each method's significant proteins.
+It is for independent samples and stops if biological replicate identifiers
+repeat across time points.
+
+The default selection thresholds can be overridden from the command line. For
+example, add `--model-fdr 0.05 --limma-interaction-fdr 0.05
+--coefficient-alpha 0.05 --min-r-squared 0.60`. Use `--polynomial-degree` and
+`--spline-df` to change the corresponding basis sizes.
 
 ## Add a custom figure or report section
 

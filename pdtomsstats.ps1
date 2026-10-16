@@ -1,3 +1,4 @@
+# Authors: Subrata Paul and Kevin Cormier
 $ErrorActionPreference = "Stop"
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {

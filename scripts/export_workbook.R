@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+# Authors: Subrata Paul and Kevin Cormier
 
 args <- commandArgs(trailingOnly = TRUE)
 job_mode <- length(args) == 2L && identical(args[[1]], "--job")
@@ -89,7 +90,8 @@ calculate_unnormalized_msstats_protein_abundance(objects_file, unnormalized_file
 
 source(export_script)
 export_msstats_workbook(
-  protein_file, objects_file, results_dir, output_file
+  protein_file, objects_file, results_dir, output_file,
+  maximum_allowed_fold_change = if (job_mode) job$maximum_allowed_fold_change else NULL
 )
 
 cat("Workbook:", normalizePath(output_file, winslash = "/", mustWork = TRUE), "\n")

@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+# Authors: Subrata Paul and Kevin Cormier
 
 script_argument <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_file <- sub("^--file=", "", script_argument[[1]])

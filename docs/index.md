@@ -69,7 +69,7 @@ flowchart LR
     CFG[YAML configuration] --> MAIN
     MAIN --> HTML[Self-contained HTML]
     MAIN --> TABLES[CSV and RDS outputs]
-    TABLES --> TIME[maSigPro and Mfuzz]
+    TABLES --> TIME[maSigPro, limma splines, and Mfuzz]
     PROTEIN[Optional protein workbook] --> XLSX[Formatted workbook]
     TABLES --> XLSX
 ```
@@ -139,7 +139,7 @@ full-width visual grouping of collapsed rows.
 ::: {.feature-item}
 #### Optional time course
 
-Independent-sample temporal analysis with maSigPro and Mfuzz when a compatible
+Independent-sample temporal analysis with maSigPro, limma splines, and Mfuzz when a compatible
 time-course configuration is supplied.
 
 [Understand the time-course stage →](timecourse.md)

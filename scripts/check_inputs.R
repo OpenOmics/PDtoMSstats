@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+# Authors: Subrata Paul and Kevin Cormier
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) != 1L) {

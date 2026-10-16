@@ -79,6 +79,8 @@ volcano_top_labels: 10
 # they inherit volcano_p_cutoff and volcano_fc_cutoff, preserving prior behavior.
 differential_pvalue_cutoff: null
 differential_log2fc_cutoff: null
+# Excel protein/peptide-view ratio cap; log2FC is limited to +/- log2(this value).
+maximum_allowed_fold_change: 100
 
 # Power-analysis defaults.
 power_alpha: 0.05

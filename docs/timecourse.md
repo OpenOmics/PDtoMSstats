@@ -44,33 +44,65 @@ reference_group: "Reference"
 comparison_group: "Treatment"
 ```
 
-`time_unit` rescales time before polynomial fitting. It changes coefficient
-units and numerical stability, not the fitted trajectories.
+`time_unit` rescales time before trajectory fitting. Affine time rescaling does
+not change the fitted orthogonal-polynomial or natural-spline model space.
 
 ## Statistical steps
 
 1. Require at least `min_replicates_per_cell` finite protein values in every
    group-time cell.
 2. Remove proteins with no variation.
-3. Fit a maSigPro polynomial regression with the reference group as baseline.
-4. Control the overall-model false-discovery rate with Benjamini–Hochberg.
-5. Apply backward coefficient selection and the configured minimum R-squared.
-6. Select proteins with at least one comparison-group-by-time term. A constant
-   difference between groups is not a progression difference.
-7. Average replicates, calculate comparison-minus-reference effects, and
-   standardize each selected trajectory.
-8. Choose an Mfuzz cluster count from the configured range using Dmin and
-   repeated non-empty-cluster diagnostics.
-9. Export all memberships, centroids, unstandardized effects, model results,
-   diagnostics, plots, and session information.
+3. Fit maSigPro with an orthogonal polynomial time basis and the reference
+   group as baseline.
+4. Control the maSigPro overall-model false-discovery rate, apply backward
+   interaction-term selection, and require the configured minimum R-squared.
+5. Fit a limma natural-spline model and jointly test all group-by-time spline
+   coefficients with an empirical-Bayes moderated F test.
+6. Control the limma interaction false-discovery rate with
+   `limma_interaction_fdr`.
+7. Export the union of significant proteins with statistics and coefficients
+   from both models plus a `SignificanceCategory` value of `Both methods`,
+   `maSigPro only`, or `limma-spline only`.
+8. Average replicates and calculate comparison-minus-reference effects
+   separately for the maSigPro and limma-spline protein sets.
+9. Run Mfuzz independently for each set, including independent fuzzifier,
+   Dmin, cselection, cluster-count, membership, and core-member results.
+10. Export both model tables, the combined table, both Mfuzz result families,
+    plots, saved objects, and session information.
+
+## Principal outputs
+
+- `timecourse_combined_significant_proteins.csv`: union of significant
+  proteins, both models' statistics and coefficients, and the
+  `SignificanceCategory` method-agreement label.
+- `masigpro_model_results.csv` and `limma_spline_model_results.csv`: complete
+  model-specific results for all tested proteins.
+- `mfuzz_method_parameter_comparison.csv`: side-by-side input counts,
+  fuzzifiers, candidate and selected cluster counts, core-member counts, and
+  clustering backend.
+- `masigpro_mfuzz_*` and `limma_spline_mfuzz_*`: separate memberships,
+  centroids, cluster summaries, and cluster-number diagnostics.
+- `<request>.html`: self-contained interactive report with searchable,
+  downloadable DT tables and plots for both methods. The primary HTML result
+  table is a compact biological interpretation view with method agreement,
+  adjusted p-values, maSigPro R-squared, separate method-specific Mfuzz
+  clusters and memberships, and an early-to-late observed-effect summary; the
+  complete coefficient-level results remain in the CSV files. An embedded
+  client-side dashboard near the end of the report can search and select any
+  significant protein, summarize its two-model and Mfuzz results in cards, and
+  plot its raw biological replicates, group means, and standard errors. It uses
+  ordinary in-document JavaScript and SVG so it works when the standalone HTML
+  is opened directly from disk without a server.
 
 ## Important settings
 
 | Setting | Purpose |
 |---|---|
 | `min_replicates_per_cell` | Balanced coverage required in every cell |
-| `polynomial_degree` | Maximum trajectory curvature modeled by maSigPro |
-| `model_fdr` | BH threshold for overall models |
+| `polynomial_degree` | Orthogonal-polynomial degree used by maSigPro |
+| `spline_df` | Natural-spline time degrees of freedom used by limma |
+| `model_fdr` | BH threshold for the maSigPro overall model |
+| `limma_interaction_fdr` | BH threshold for the joint limma spline-interaction test |
 | `coefficient_alpha` | Backward-selection threshold |
 | `min_r_squared` | Minimum retained model fit |
 | `min_clusters`, `max_clusters` | Mfuzz candidate cluster range |
@@ -82,7 +114,7 @@ units and numerical stability, not the fitted trajectories.
   measures.
 - Too few samples in a group-time cell: lower the coverage requirement only
   with a documented scientific reason.
-- No time-by-group proteins: the configured criteria found no differential
-  progression, so Mfuzz has no statistically selected input to cluster.
+- No time-by-group proteins for either method: the configured criteria found no
+  method-specific input for its Mfuzz run.
 - Too few selected proteins for multiple cluster counts: broaden the cluster
   range or reconsider whether clustering is informative for that dataset.

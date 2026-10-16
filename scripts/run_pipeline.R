@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+# Authors: Subrata Paul and Kevin Cormier
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1L || length(args) > 2L) {
@@ -33,7 +34,7 @@ run_step("MSstats report", "scripts/render_report.R", args[[1]])
 
 if (length(args) == 2L) {
   run_step(
-    "maSigPro and Mfuzz time-course report",
+    "maSigPro, limma-spline, and Mfuzz time-course report",
     "scripts/render_timecourse_report.R",
     args[[2]]
   )

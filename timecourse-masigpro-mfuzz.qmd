@@ -1,12 +1,13 @@
 ---
-title: "Time-course Proteomics with maSigPro and Mfuzz"
-subtitle: "Differential progression and soft clustering from MSstats protein abundances"
+title: "Time-course Proteomics with maSigPro, limma Splines, and Mfuzz"
+subtitle: "Complementary differential-trajectory models and method-specific soft clustering"
 author:
-  - Kevin Cormier
+  - Subrata Paul
 date: today
 title-block-banner: "#27445C"
 format:
   html:
+    html-math-method: mathml
     toc: true
     toc-location: left
     toc-active-border: red
@@ -37,7 +38,9 @@ params:
   time_unit: 24
   min_replicates_per_cell: 4
   polynomial_degree: 3
+  spline_df: 3
   model_fdr: 0.05
+  limma_interaction_fdr: 0.05
   coefficient_alpha: 0.05
   min_r_squared: 0.60
   min_clusters: 2
@@ -65,10 +68,12 @@ required_packages <- c(
   "data.table",
   "dplyr",
   "DT",
+  "e1071",
   "ggplot2",
+  "jsonlite",
   "knitr",
+  "limma",
   "maSigPro",
-  "Mfuzz",
   "readr",
   "scales",
   "tibble",
@@ -79,22 +84,10 @@ missing_packages <- required_packages[
   !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
 ]
 if (length(missing_packages)) {
-  macos_mfuzz_note <- if (
-    identical(Sys.info()[["sysname"]], "Darwin") &&
-    "Mfuzz" %in% missing_packages
-  ) {
-    paste0(
-      " On macOS, an installed Mfuzz package may still require XQuartz ",
-      "because its optional Tk interface is imported when the package loads."
-    )
-  } else {
-    ""
-  }
   stop(
     "Install required package(s): ",
     paste(missing_packages, collapse = ", "),
-    ". maSigPro and Mfuzz are available from Bioconductor.",
-    macos_mfuzz_note,
+    ". maSigPro and limma are available from Bioconductor.",
     call. = FALSE
   )
 }
@@ -103,12 +96,21 @@ suppressPackageStartupMessages({
   library(Biobase)
   library(data.table)
   library(dplyr)
+  library(e1071)
   library(ggplot2)
+  library(limma)
   library(maSigPro)
-  library(Mfuzz)
   library(tibble)
   library(tidyr)
 })
+
+# Mfuzz imports optional Tk components and may not load on headless/macOS
+# systems without XQuartz. Use the package when available; otherwise run the
+# same standardization, fuzzifier formula, and e1071 fuzzy c-means backend.
+mfuzz_package_available <- suppressWarnings(tryCatch(
+  requireNamespace("Mfuzz", quietly = TRUE),
+  error = function(error) FALSE
+))
 
 current_input <- tryCatch(knitr::current_input(), error = function(e) NULL)
 report_dir <- if (!is.null(current_input) && nzchar(current_input)) {
@@ -158,6 +160,345 @@ write_result <- function(data, filename) {
   normalizePath(path, winslash = "/", mustWork = TRUE)
 }
 
+describe_timecourse_column <- function(column) {
+  source_prefix <- ""
+  base_column <- column
+  if (startsWith(column, "maSigPro_")) {
+    source_prefix <- "maSigPro: "
+    base_column <- sub("^maSigPro_", "", column)
+  } else if (startsWith(column, "limmaSpline_")) {
+    source_prefix <- "limma-spline: "
+    base_column <- sub("^limmaSpline_", "", column)
+  } else if (startsWith(column, "limma_")) {
+    source_prefix <- "limma-spline: "
+    base_column <- sub("^limma_", "", column)
+  }
+
+  exact <- list(
+    Step = c(
+      "Filtering or analysis step.",
+      "Read from top to bottom to see which rule was added at each stage."
+    ),
+    Stage = c(
+      "Filtering or analysis stage.",
+      "Read from top to bottom to see how many proteins remain after each rule."
+    ),
+    Proteins = c(
+      "Number of proteins represented by the row.",
+      "Use it to compare the size of filtering stages, categories, or clusters."
+    ),
+    Run = c(
+      "Unique sample/run identifier.",
+      "Each row of a design matrix links one analyzed sample to its predictors."
+    ),
+    Protein = c(
+      "Protein identifier inherited from the MSstats protein-level data.",
+      "Use this key to join model, clustering, and source-result tables."
+    ),
+    Variable = c(
+      "maSigPro model term retained by backward selection.",
+      "A protein listed for a group-by-time term contributes to the differential-trajectory set."
+    ),
+    Group = c(
+      "Model component or biological group represented by the row.",
+      "Interpret it with the configured reference and comparison groups."
+    ),
+    GroupComponent = c(
+      "maSigPro group-level component used to summarize selected proteins.",
+      "Use the count to see which encoded group component received retained model assignments."
+    ),
+    Intercept = c(
+      "Model intercept predictor.",
+      "Represents the encoded reference-group baseline in the fitted design."
+    ),
+    OverallModelPValue = c(
+      "Raw maSigPro full-model p-value versus an intercept-only model.",
+      "Smaller values indicate evidence that the protein changes with group and/or time; use the adjusted value for selection."
+    ),
+    OverallModelAdjustedPValue = c(
+      "Benjamini-Hochberg-adjusted maSigPro overall-model p-value.",
+      "Values at or below model_fdr pass the first maSigPro screening step."
+    ),
+    AdjPValue = c(
+      "Benjamini-Hochberg-adjusted differential-trajectory p-value.",
+      "Compare it with the corresponding method's configured FDR threshold; smaller values indicate stronger evidence."
+    ),
+    StepwiseModelPValue = c(
+      "maSigPro p-value for the model remaining after backward term selection.",
+      "This summarizes the selected model; interaction selection and R-squared are also required."
+    ),
+    ModelRSquared = c(
+      "R-squared for the retained maSigPro model.",
+      "Higher values mean the selected terms explain more observed variation; values must meet min_r_squared."
+    ),
+    RSquared = c(
+      "R-squared for the retained trajectory model.",
+      "Higher values indicate that the fitted model explains more observed variation; it is not a significance probability."
+    ),
+    PassedOverallModelFDR = c(
+      "Whether the protein passed the configured maSigPro overall-model FDR.",
+      "TRUE means it passed the first maSigPro significance screen."
+    ),
+    PassedRSquared = c(
+      "Whether the retained maSigPro model passed min_r_squared.",
+      "TRUE indicates adequate configured model fit, not biological validation."
+    ),
+    DifferentialTimeInteraction = c(
+      "Whether the method selected a group-by-time trajectory difference.",
+      "TRUE means the protein enters that method's significant set and Mfuzz analysis."
+    ),
+    InteractionF = c(
+      "limma moderated F statistic jointly testing all group-by-spline interactions.",
+      "Larger values provide stronger joint evidence of different trajectories; assess significance with the adjusted p-value."
+    ),
+    InteractionPValue = c(
+      "Raw p-value for limma's joint spline-interaction test.",
+      "Smaller values indicate stronger evidence before correction for testing many proteins."
+    ),
+    InteractionAdjustedPValue = c(
+      "Benjamini-Hochberg-adjusted limma spline-interaction p-value.",
+      "Values at or below limma_interaction_fdr define the limma-spline significant set."
+    ),
+    FullModelRSquared = c(
+      "R-squared from the full limma spline design.",
+      "Describes fit but is not the limma significance criterion; use the adjusted interaction p-value for selection."
+    ),
+    SignificantInMaSigPro = c(
+      "Whether the protein passed the complete maSigPro trajectory criteria.",
+      "TRUE means it is included in the maSigPro-specific Mfuzz input."
+    ),
+    SignificantInLimmaSpline = c(
+      "Whether the protein passed the limma joint interaction FDR.",
+      "TRUE means it is included in the limma-spline-specific Mfuzz input."
+    ),
+    SignificanceCategory = c(
+      "Agreement label: Both methods, maSigPro only, or limma-spline only.",
+      "Both-method hits have convergent statistical support; method-only hits should be interpreted with that model's assumptions."
+    ),
+    Method = c(
+      "Differential-trajectory method supplying proteins to the Mfuzz run.",
+      "Compare rows to see how model selection changes clustering inputs and results."
+    ),
+    SignificantProteins = c(
+      "Number of proteins selected by the indicated trajectory method.",
+      "This is the initial input count for that method's independent Mfuzz analysis."
+    ),
+    ClusteredProfiles = c(
+      "Number of complete standardized profiles actually clustered.",
+      "A value below SignificantProteins indicates profiles were removed before clustering."
+    ),
+    TimePoints = c(
+      "Number of group-difference time points in each clustered profile.",
+      "More time points allow more trajectory detail but can affect fuzzifier estimation."
+    ),
+    Fuzzifier = c(
+      "Mfuzz fuzzification parameter m.",
+      "Higher values produce softer, more distributed memberships; compare it alongside membership values."
+    ),
+    CandidateMinimumClusters = c(
+      "Smallest cluster count evaluated.",
+      "This is the lower boundary of the Dmin and cselection search, not a result."
+    ),
+    CandidateMaximumClusters = c(
+      "Largest cluster count evaluated.",
+      "This is the upper search boundary and may be limited by the number of profiles."
+    ),
+    DiagnosticRepeats = c(
+      "Number of repeated random starts used for cluster diagnostics.",
+      "More repeats give a more stable assessment of empty clusters and centroid distance."
+    ),
+    SelectedClusters = c(
+      "Cluster count selected from the diagnostic candidates.",
+      "Use it as an exploratory partition of trajectory shapes rather than a tested biological truth."
+    ),
+    CoreMembershipThreshold = c(
+      "Minimum maximum membership used to call a core cluster member.",
+      "This is a descriptive cutoff and does not represent a p-value."
+    ),
+    CoreProteins = c(
+      "Number of proteins meeting the core-membership threshold.",
+      "A larger fraction suggests crisper assignment to the fitted clusters."
+    ),
+    MedianMaximumMembership = c(
+      "Median, across proteins, of each protein's highest cluster membership.",
+      "Values nearer 1 indicate clearer assignments; lower values indicate overlapping trajectories."
+    ),
+    Backend = c(
+      "Software implementation used for fuzzy c-means and diagnostics.",
+      "Report it for reproducibility; Mfuzz-compatible fallback results use the same stated parameterization."
+    ),
+    Cluster = c(
+      "Highest-membership Mfuzz cluster assigned to the protein or summary row.",
+      "Cluster numbers are arbitrary labels; interpret them from their centroid and effect trajectory."
+    ),
+    MaximumMembership = c(
+      "Largest fuzzy membership value across all clusters for the protein.",
+      "Values nearer 1 indicate a clearer assignment to the reported Cluster."
+    ),
+    Membership = c(
+      "Maximum fuzzy membership in the reported method-specific cluster.",
+      "Values nearer 1 indicate a clearer cluster assignment; a dash means the protein was not clustered by that method."
+    ),
+    CoreMember = c(
+      "Whether MaximumMembership meets core_membership.",
+      "TRUE marks a descriptive core member, not a statistically significant cluster assignment."
+    ),
+    PeakPositiveTime = c(
+      "Time at which the cluster's median comparison-minus-reference effect is largest.",
+      "Identifies when the cluster is most shifted toward the comparison group."
+    ),
+    PeakNegativeTime = c(
+      "Time at which the cluster's median comparison-minus-reference effect is smallest.",
+      "Identifies when the cluster is most shifted toward the reference group."
+    ),
+    EarlyMedianEffect = c(
+      "Cluster median comparison-minus-reference log2 effect at the earliest time.",
+      "Positive values favor the comparison group; negative values favor the reference group."
+    ),
+    LateMedianEffect = c(
+      "Cluster median comparison-minus-reference log2 effect at the latest time.",
+      "Compare with EarlyMedianEffect to summarize the direction of trajectory change."
+    ),
+    TrajectorySummary = c(
+      "Observed comparison-minus-reference log2 effect at the earliest and latest time points.",
+      "The arrow summarizes endpoint change; inspect the trajectory plot for transient differences between those endpoints."
+    ),
+    File = c(
+      "Machine-readable output filename.",
+      "Use the named file for complete results rather than copying only visible HTML rows."
+    ),
+    Contents = c(
+      "Description of the output file's contents.",
+      "Use it to choose the appropriate table or saved object for downstream analysis."
+    )
+  )
+
+  description <- exact[[base_column]]
+  if (is.null(description) && grepl("^p\\.valor_", base_column)) {
+    term <- sub("^p\\.valor_", "", base_column)
+    description <- c(
+      paste0("maSigPro term-level p-value for ", term, "."),
+      "Use it to see which retained polynomial component supports the fitted model; do not treat basis terms as biological mechanisms."
+    )
+  }
+  if (is.null(description) && grepl("^Coefficient_", base_column)) {
+    term <- sub("^Coefficient_", "", base_column)
+    description <- c(
+      paste0("Estimated limma model coefficient for ", term, "."),
+      "Its sign depends on the encoded spline basis; rely on the joint interaction test and trajectory plots for biological direction."
+    )
+  }
+  if (is.null(description) && grepl("^ModeratedT_", base_column)) {
+    term <- sub("^ModeratedT_", "", base_column)
+    description <- c(
+      paste0("limma empirical-Bayes moderated t statistic for ", term, "."),
+      "Magnitude reflects term-level evidence, but the reported limma selection uses the joint moderated F test."
+    )
+  }
+  if (is.null(description) && grepl("^MembershipCluster[0-9]+$", base_column)) {
+    cluster_number <- sub("^MembershipCluster", "", base_column)
+    description <- c(
+      paste0("Fuzzy membership in cluster ", cluster_number, "."),
+      "Values range from 0 to 1 and sum to 1 across cluster-membership columns for each protein."
+    )
+  }
+  if (is.null(description) && grepl("^OrthogonalTime[0-9]+x", base_column)) {
+    description <- c(
+      "Orthogonal-polynomial group-by-time interaction predictor.",
+      "A retained interaction indicates evidence that the comparison trajectory differs from the reference trajectory."
+    )
+  }
+  if (is.null(description) && grepl("^OrthogonalTime[0-9]+$", base_column)) {
+    description <- c(
+      "Orthogonal-polynomial time-basis predictor for the reference group.",
+      "It is a mathematical curve component and should not be interpreted alone as a biological phase."
+    )
+  }
+  if (is.null(description) && grepl("spline.*spline_basis", base_column)) {
+    description <- c(
+      "Natural-spline group-by-time interaction predictor.",
+      "The interaction columns are tested jointly; individual basis values are not direct biological effects."
+    )
+  }
+  if (is.null(description) && grepl("^spline_basis[0-9]+$", base_column)) {
+    description <- c(
+      "Natural-spline time-basis predictor for the reference group.",
+      "It is a mathematical basis value; interpret the fitted trajectory rather than this column alone."
+    )
+  }
+  if (is.null(description) && grepl("^spline_group", base_column)) {
+    description <- c(
+      "Comparison-group main-effect predictor in the limma design.",
+      "It represents the encoded baseline group contrast, conditional on the spline parameterization."
+    )
+  }
+  if (is.null(description) && base_column %in% c("X.Intercept.", "(Intercept)")) {
+    description <- c(
+      "Model intercept predictor.",
+      "Represents the encoded reference-group baseline in the fitted design."
+    )
+  }
+  if (is.null(description) && grepl("vs", base_column, fixed = TRUE)) {
+    description <- c(
+      "Comparison-versus-reference group indicator in the maSigPro design.",
+      "Encodes the constant group offset before group-by-time interactions are considered."
+    )
+  }
+  if (is.null(description)) {
+    description <- c(
+      paste0("Analysis field named ", base_column, "."),
+      "Interpret this field in the context of the table caption and configured model."
+    )
+  }
+  description[[1]] <- paste0(source_prefix, description[[1]])
+  description
+}
+
+column_guide <- function(columns, note = NULL) {
+  definitions <- t(vapply(
+    as.character(columns), describe_timecourse_column, character(2)
+  ))
+  guide <- tibble(
+    Column = as.character(columns),
+    Meaning = definitions[, 1],
+    `How to interpret` = definitions[, 2]
+  )
+  cat(
+    '\n<details class="column-guide" style="margin:0.75rem 0 1.5rem 0;">',
+    '\n<summary style="cursor:pointer;font-weight:600;">',
+    'Column meanings and interpretation</summary>\n',
+    sep = ""
+  )
+  if (!is.null(note) && nzchar(note)) {
+    cat('<p style="margin-top:0.75rem;">', note, '</p>\n', sep = "")
+  }
+  cat('<div style="overflow-x:auto;">\n')
+  cat(as.character(knitr::kable(
+    guide, format = "html", escape = TRUE,
+    table.attr = 'class="table table-sm table-striped"'
+  )))
+  cat('\n</div>\n</details>\n')
+  invisible(guide)
+}
+
+format_report_p <- function(values) {
+  formatted <- format.pval(values, digits = 3, eps = 1e-99)
+  formatted[is.na(values)] <- "—"
+  formatted
+}
+
+format_report_number <- function(values, digits = 3) {
+  formatted <- formatC(values, format = "f", digits = digits)
+  formatted[is.na(values)] <- "—"
+  formatted
+}
+
+format_report_cluster <- function(values) {
+  formatted <- as.character(as.integer(values))
+  formatted[is.na(values)] <- "—"
+  formatted
+}
+
 extract_significant_names <- function(significant_object) {
   profiles <- significant_object$sig.profiles
   if (is.null(profiles) || !nrow(profiles)) character() else rownames(profiles)
@@ -177,6 +518,278 @@ choose_cluster_count <- function(cluster_numbers, minimum_distances, nonempty_ma
   straight_line <- 1 - x_scaled
   elbow_score <- straight_line - y_scaled
   x[[which.max(elbow_score)]]
+}
+
+estimate_fuzzifier <- function(profile_matrix) {
+  proteins <- nrow(profile_matrix)
+  time_points <- ncol(profile_matrix)
+  1 + (1418 / proteins + 22.05) * time_points^(-2) +
+    (12.33 / proteins + 0.243) *
+      time_points^(-0.0406 * log(proteins) - 0.1134)
+}
+
+fallback_dmin <- function(profile_matrix, fuzzifier, cluster_candidates, repeats) {
+  distances <- matrix(
+    NA_real_, nrow = length(cluster_candidates), ncol = repeats
+  )
+  for (repetition in seq_len(repeats)) {
+    for (index in seq_along(cluster_candidates)) {
+      fit <- e1071::cmeans(
+        profile_matrix,
+        centers = cluster_candidates[[index]],
+        m = fuzzifier,
+        iter.max = 1000,
+        method = "cmeans",
+        dist = "euclidean"
+      )
+      distances[index, repetition] <- min(stats::dist(fit$centers))
+    }
+  }
+  rowMeans(distances)
+}
+
+fallback_cselection <- function(
+    profile_matrix, fuzzifier, cluster_candidates, repeats) {
+  nonempty <- matrix(
+    0L, nrow = repeats, ncol = length(cluster_candidates)
+  )
+  for (index in seq_along(cluster_candidates)) {
+    for (repetition in seq_len(repeats)) {
+      fit <- e1071::cmeans(
+        profile_matrix,
+        centers = cluster_candidates[[index]],
+        m = fuzzifier,
+        iter.max = 1000,
+        method = "cmeans",
+        dist = "euclidean"
+      )
+      nonempty[repetition, index] <- sum(
+        colSums(fit$membership > 0.5) > 0
+      )
+    }
+  }
+  nonempty
+}
+
+fit_method_mfuzz <- function(
+    method, selected_proteins, protein_data, time_values, groups, params) {
+  condition_summary <- protein_data |>
+    filter(
+      .data$Protein %in% selected_proteins,
+      is.finite(.data$Log2Abundance)
+    ) |>
+    group_by(.data$Protein, .data$Time, .data$Group) |>
+    summarise(
+      MeanLog2Abundance = mean(.data$Log2Abundance),
+      SDLog2Abundance = stats::sd(.data$Log2Abundance),
+      Replicates = n(),
+      SELog2Abundance = .data$SDLog2Abundance / sqrt(.data$Replicates),
+      .groups = "drop"
+    )
+
+  effect_long <- condition_summary |>
+    select(Protein, Time, Group, MeanLog2Abundance) |>
+    pivot_wider(names_from = Group, values_from = MeanLog2Abundance) |>
+    mutate(
+      Effect = .data[[params$comparison_group]] -
+        .data[[params$reference_group]]
+    )
+
+  effect_table <- effect_long |>
+    select(Protein, Time, Effect) |>
+    pivot_wider(names_from = Time, values_from = Effect)
+  time_columns <- as.character(time_values)
+  effect_matrix <- as.matrix(effect_table[, time_columns, drop = FALSE])
+  storage.mode(effect_matrix) <- "double"
+  rownames(effect_matrix) <- effect_table$Protein
+  if (any(!is.finite(effect_matrix))) {
+    stop(
+      "Balanced coverage should produce complete condition means for ",
+      method, ", but missing effects remain.",
+      call. = FALSE
+    )
+  }
+
+  effect_eset <- Biobase::ExpressionSet(
+    assayData = effect_matrix,
+    phenoData = Biobase::AnnotatedDataFrame(data.frame(
+      Time = time_values,
+      row.names = time_columns
+    ))
+  )
+
+  if (mfuzz_package_available) {
+    effect_eset <- Mfuzz::filter.NA(effect_eset, thres = 0)
+    effect_eset <- Mfuzz::filter.std(effect_eset, min.std = 0, visu = FALSE)
+    standardized_eset <- Mfuzz::standardise(effect_eset)
+    standardized_matrix <- Biobase::exprs(standardized_eset)
+    fuzzifier <- Mfuzz::mestimate(standardized_eset)
+    backend <- "Mfuzz"
+  } else {
+    standardized_matrix <- t(scale(t(effect_matrix)))
+    retained <- apply(standardized_matrix, 1, function(values) {
+      all(is.finite(values))
+    })
+    standardized_matrix <- standardized_matrix[retained, , drop = FALSE]
+    effect_eset <- effect_eset[retained, ]
+    standardized_eset <- Biobase::ExpressionSet(
+      assayData = standardized_matrix,
+      phenoData = Biobase::phenoData(effect_eset)
+    )
+    fuzzifier <- estimate_fuzzifier(standardized_matrix)
+    backend <- "Mfuzz-compatible e1071 fallback"
+  }
+
+  maximum_candidate <- min(
+    as.integer(params$max_clusters), nrow(standardized_matrix) - 1L
+  )
+  cluster_candidates <- seq.int(
+    as.integer(params$min_clusters), maximum_candidate
+  )
+  if (length(cluster_candidates) < 2L) {
+    stop(
+      method, " has too few selected proteins for the configured Mfuzz range.",
+      call. = FALSE
+    )
+  }
+
+  set.seed(as.integer(params$random_seed))
+  if (mfuzz_package_available) {
+    minimum_centroid_distance <- Mfuzz::Dmin(
+      standardized_eset,
+      m = fuzzifier,
+      crange = cluster_candidates,
+      repeats = as.integer(params$cluster_diagnostic_repeats),
+      visu = FALSE
+    )
+    set.seed(as.integer(params$random_seed))
+    nonempty_clusters <- Mfuzz::cselection(
+      standardized_eset,
+      m = fuzzifier,
+      crange = cluster_candidates,
+      repeats = as.integer(params$cluster_diagnostic_repeats),
+      visu = FALSE
+    )
+  } else {
+    minimum_centroid_distance <- fallback_dmin(
+      standardized_matrix, fuzzifier, cluster_candidates,
+      as.integer(params$cluster_diagnostic_repeats)
+    )
+    set.seed(as.integer(params$random_seed))
+    nonempty_clusters <- fallback_cselection(
+      standardized_matrix, fuzzifier, cluster_candidates,
+      as.integer(params$cluster_diagnostic_repeats)
+    )
+  }
+
+  chosen_clusters <- choose_cluster_count(
+    cluster_candidates, minimum_centroid_distance, nonempty_clusters
+  )
+  set.seed(as.integer(params$random_seed))
+  if (mfuzz_package_available) {
+    fit <- Mfuzz::mfuzz(
+      standardized_eset,
+      centers = chosen_clusters,
+      m = fuzzifier,
+      iter.max = 1000
+    )
+  } else {
+    fit <- e1071::cmeans(
+      standardized_matrix,
+      centers = chosen_clusters,
+      m = fuzzifier,
+      iter.max = 1000,
+      method = "cmeans",
+      dist = "euclidean"
+    )
+  }
+
+  membership_table <- as.data.frame(fit$membership) |>
+    rownames_to_column("Protein")
+  names(membership_table)[-1] <- paste0(
+    "MembershipCluster", seq_len(chosen_clusters)
+  )
+  membership_matrix <- as.matrix(membership_table[, -1, drop = FALSE])
+  assignments <- membership_table |>
+    mutate(
+      Cluster = as.integer(fit$cluster),
+      MaximumMembership = apply(membership_matrix, 1, max),
+      CoreMember = .data$MaximumMembership >= params$core_membership
+    ) |>
+    relocate(Protein, Cluster, MaximumMembership, CoreMember)
+
+  centroid_table <- as.data.frame(fit$centers) |>
+    rownames_to_column("Cluster") |>
+    mutate(Cluster = as.integer(.data$Cluster))
+  names(centroid_table)[-1] <- paste0("Time", time_values)
+
+  diagnostics <- tibble(
+    CandidateClusters = cluster_candidates,
+    MinimumCentroidDistance = minimum_centroid_distance,
+    MedianNonemptyClusters = apply(nonempty_clusters, 2, stats::median),
+    MinimumNonemptyClusters = apply(nonempty_clusters, 2, min),
+    MaximumNonemptyClusters = apply(nonempty_clusters, 2, max),
+    Selected = cluster_candidates == chosen_clusters
+  )
+
+  cluster_summary <- assignments |>
+    group_by(.data$Cluster) |>
+    summarise(
+      Proteins = n(),
+      CoreProteins = sum(.data$CoreMember),
+      MedianMaximumMembership = stats::median(.data$MaximumMembership),
+      .groups = "drop"
+    ) |>
+    left_join(
+      effect_long |>
+        inner_join(assignments |> select(Protein, Cluster), by = "Protein") |>
+        group_by(.data$Cluster, .data$Time) |>
+        summarise(
+          MedianEffect = stats::median(.data$Effect), .groups = "drop"
+        ) |>
+        group_by(.data$Cluster) |>
+        summarise(
+          PeakPositiveTime = .data$Time[which.max(.data$MedianEffect)],
+          PeakNegativeTime = .data$Time[which.min(.data$MedianEffect)],
+          EarlyMedianEffect = .data$MedianEffect[which.min(.data$Time)],
+          LateMedianEffect = .data$MedianEffect[which.max(.data$Time)],
+          .groups = "drop"
+        ),
+      by = "Cluster"
+    )
+
+  parameters <- tibble(
+    Method = method,
+    SignificantProteins = length(selected_proteins),
+    ClusteredProfiles = nrow(standardized_matrix),
+    TimePoints = ncol(standardized_matrix),
+    Fuzzifier = fuzzifier,
+    CandidateMinimumClusters = min(cluster_candidates),
+    CandidateMaximumClusters = max(cluster_candidates),
+    DiagnosticRepeats = as.integer(params$cluster_diagnostic_repeats),
+    SelectedClusters = chosen_clusters,
+    CoreMembershipThreshold = as.numeric(params$core_membership),
+    CoreProteins = sum(assignments$CoreMember),
+    MedianMaximumMembership = median(assignments$MaximumMembership),
+    Backend = backend
+  )
+
+  list(
+    method = method,
+    condition_summary = condition_summary,
+    effect_long = effect_long,
+    effect_expression_set = effect_eset,
+    standardized_expression_set = standardized_eset,
+    fuzzifier = fuzzifier,
+    cluster_candidates = cluster_candidates,
+    selected_clusters = chosen_clusters,
+    fit = fit,
+    assignments = assignments,
+    centroids = centroid_table,
+    diagnostics = diagnostics,
+    cluster_summary = cluster_summary,
+    parameters = parameters
+  )
 }
 ```
 
@@ -331,7 +944,7 @@ filter_summary <- tibble(
 )
 ```
 
-```{r run-masigpro, include=FALSE}
+```{r run-trajectory-models, include=FALSE}
 baseline_time <- min(annotation$Time)
 scaled_time <- (annotation$Time - baseline_time) / params$time_unit
 
@@ -348,12 +961,41 @@ experimental_design[[params$comparison_group]] <- as.integer(
   annotation$Group == params$comparison_group
 )
 
-masigpro_design <- maSigPro::make.design.matrix(
-  experimental_design,
-  degree = params$polynomial_degree,
-  time.col = 1,
-  repl.col = 2,
-  group.cols = 3:4
+orthogonal_time <- stats::poly(
+  scaled_time, degree = as.integer(params$polynomial_degree)
+)
+comparison_indicator <- as.integer(
+  annotation$Group == params$comparison_group
+)
+masigpro_predictors <- matrix(
+  comparison_indicator,
+  ncol = 1,
+  dimnames = list(annotation$Run, paste0(
+    params$comparison_group, "vs", params$reference_group
+  ))
+)
+masigpro_groups <- paste0(
+  params$comparison_group, "vs", params$reference_group
+)
+for (degree in seq_len(as.integer(params$polynomial_degree))) {
+  main_name <- paste0("OrthogonalTime", degree)
+  interaction_name <- paste0(main_name, "x", params$comparison_group)
+  masigpro_predictors <- cbind(
+    masigpro_predictors,
+    orthogonal_time[, degree],
+    orthogonal_time[, degree] * comparison_indicator
+  )
+  colnames(masigpro_predictors)[(ncol(masigpro_predictors) - 1):ncol(masigpro_predictors)] <-
+    c(main_name, interaction_name)
+  masigpro_groups <- c(
+    masigpro_groups, params$reference_group,
+    paste0(params$comparison_group, "vs", params$reference_group)
+  )
+}
+masigpro_design <- list(
+  dis = as.data.frame(masigpro_predictors, check.names = FALSE),
+  groups.vector = masigpro_groups,
+  edesign = experimental_design
 )
 
 masigpro_console <- capture.output(
@@ -375,80 +1017,83 @@ tfit_console <- capture.output(
   )
 )
 
-significant_all <- maSigPro::get.siggenes(
+masigpro_significant_all <- maSigPro::get.siggenes(
   masigpro_tfit,
   rsq = params$min_r_squared,
   vars = "all"
 )
-significant_each <- maSigPro::get.siggenes(
+masigpro_significant_each <- maSigPro::get.siggenes(
   masigpro_tfit,
   rsq = params$min_r_squared,
   vars = "each"
 )
-significant_groups <- maSigPro::get.siggenes(
+masigpro_significant_groups <- maSigPro::get.siggenes(
   masigpro_tfit,
   rsq = params$min_r_squared,
   vars = "groups"
 )
 
-variable_significance <- bind_rows(lapply(
-  names(significant_each$sig.genes),
+masigpro_variable_significance <- bind_rows(lapply(
+  names(masigpro_significant_each$sig.genes),
   function(variable) {
     tibble(
       Variable = variable,
-      Protein = extract_significant_names(significant_each$sig.genes[[variable]])
+      Protein = extract_significant_names(
+        masigpro_significant_each$sig.genes[[variable]]
+      )
     )
   }
 ))
 
-variable_counts <- variable_significance |>
-  count(.data$Variable, name = "Proteins") |>
+masigpro_variable_counts <- masigpro_variable_significance |>
+  dplyr::count(.data$Variable, name = "Proteins") |>
   complete(
-    Variable = names(significant_each$sig.genes),
+    Variable = names(masigpro_significant_each$sig.genes),
     fill = list(Proteins = 0L)
   )
 
-interaction_variables <- names(significant_each$sig.genes)[
+masigpro_interaction_variables <- names(masigpro_significant_each$sig.genes)[
   grepl(
     paste0("x", params$comparison_group),
-    names(significant_each$sig.genes),
+    names(masigpro_significant_each$sig.genes),
     fixed = TRUE
   )
 ]
-differential_time_proteins <- variable_significance |>
-  filter(.data$Variable %in% interaction_variables) |>
+masigpro_differential_proteins <- masigpro_variable_significance |>
+  filter(.data$Variable %in% masigpro_interaction_variables) |>
   distinct(.data$Protein) |>
   pull(.data$Protein)
 
-if (!length(differential_time_proteins)) {
+if (!length(masigpro_differential_proteins)) {
   stop(
-    "No proteins passed the maSigPro time-by-group interaction criteria; Mfuzz cannot proceed.",
+    "No proteins passed the orthogonal maSigPro time-by-group criteria; Mfuzz cannot proceed.",
     call. = FALSE
   )
 }
 
-overall_model_results <- tibble(
+masigpro_overall_results <- tibble(
   Protein = rownames(masigpro_fit$p.vector),
   OverallModelPValue = as.numeric(masigpro_fit$p.vector[, 1]),
   OverallModelAdjustedPValue = as.numeric(masigpro_fit$p.adjusted)
 )
 
-selected_model_results <- as.data.frame(
+masigpro_selected_models <- as.data.frame(
   masigpro_tfit$sol,
   check.names = FALSE
 ) |>
   rownames_to_column("Protein")
-names(selected_model_results)[2:3] <- c(
+names(masigpro_selected_models)[2:3] <- c(
   "StepwiseModelPValue", "ModelRSquared"
 )
 
-masigpro_results <- overall_model_results |>
-  left_join(selected_model_results, by = "Protein") |>
+masigpro_results <- masigpro_overall_results |>
+  left_join(masigpro_selected_models, by = "Protein") |>
   mutate(
     PassedOverallModelFDR = .data$OverallModelAdjustedPValue <= params$model_fdr,
     PassedRSquared = !is.na(.data$ModelRSquared) &
       .data$ModelRSquared >= params$min_r_squared,
-    DifferentialTimeInteraction = .data$Protein %in% differential_time_proteins
+    DifferentialTimeInteraction = .data$Protein %in%
+      masigpro_differential_proteins
   ) |>
   arrange(
     desc(.data$DifferentialTimeInteraction),
@@ -456,205 +1101,300 @@ masigpro_results <- overall_model_results |>
     desc(.data$ModelRSquared)
   )
 
-group_counts <- tibble(
-  GroupComponent = names(significant_groups$sig.genes),
+masigpro_group_counts <- tibble(
+  GroupComponent = names(masigpro_significant_groups$sig.genes),
   Proteins = vapply(
-    significant_groups$sig.genes,
+    masigpro_significant_groups$sig.genes,
     function(x) length(extract_significant_names(x)),
     integer(1)
   )
 )
-```
 
-```{r run-mfuzz, include=FALSE}
-condition_summary <- protein_data |>
-  filter(
-    .data$Protein %in% differential_time_proteins,
-    is.finite(.data$Log2Abundance)
-  ) |>
-  group_by(.data$Protein, .data$Time, .data$Group) |>
-  summarise(
-    MeanLog2Abundance = mean(.data$Log2Abundance),
-    SDLog2Abundance = stats::sd(.data$Log2Abundance),
-    Replicates = n(),
-    SELog2Abundance = .data$SDLog2Abundance / sqrt(.data$Replicates),
-    .groups = "drop"
+spline_basis <- splines::ns(
+  scaled_time, df = as.integer(params$spline_df)
+)
+spline_group <- factor(
+  annotation$Group,
+  levels = c(params$reference_group, params$comparison_group)
+)
+limma_design <- model.matrix(~ spline_group * spline_basis)
+colnames(limma_design) <- make.names(colnames(limma_design))
+colnames(limma_design)[[1]] <- "Intercept"
+rownames(limma_design) <- annotation$Run
+limma_fit <- limma::eBayes(limma::lmFit(expression_matrix, limma_design))
+limma_interaction_columns <- grep(
+  "spline_group.*spline_basis|spline_basis.*spline_group",
+  colnames(limma_design)
+)
+limma_interaction_results <- limma::topTable(
+  limma_fit,
+  coef = limma_interaction_columns,
+  number = Inf,
+  sort.by = "none"
+) |>
+  rownames_to_column("Protein") |>
+  select(
+    Protein,
+    InteractionF = F,
+    InteractionPValue = P.Value,
+    InteractionAdjustedPValue = adj.P.Val
   )
-
-effect_long <- condition_summary |>
-  select(.data$Protein, .data$Time, .data$Group, .data$MeanLog2Abundance) |>
-  pivot_wider(names_from = .data$Group, values_from = .data$MeanLog2Abundance) |>
+limma_coefficients <- as.data.frame(limma_fit$coefficients) |>
+  rownames_to_column("Protein")
+names(limma_coefficients)[-1] <- paste0(
+  "Coefficient_", names(limma_coefficients)[-1]
+)
+limma_t_statistics <- as.data.frame(
+  limma_fit$t[, limma_interaction_columns, drop = FALSE]
+) |>
+  rownames_to_column("Protein")
+names(limma_t_statistics)[-1] <- paste0(
+  "ModeratedT_", colnames(limma_design)[limma_interaction_columns]
+)
+limma_fitted <- limma_fit$coefficients %*% t(limma_design)
+limma_r_squared <- vapply(seq_len(nrow(expression_matrix)), function(index) {
+  observed <- is.finite(expression_matrix[index, ])
+  values <- expression_matrix[index, observed]
+  fitted <- limma_fitted[index, observed]
+  total <- sum((values - mean(values))^2)
+  if (total > 0) 1 - sum((values - fitted)^2) / total else NA_real_
+}, numeric(1))
+limma_results <- limma_interaction_results |>
+  left_join(limma_coefficients, by = "Protein") |>
+  left_join(limma_t_statistics, by = "Protein") |>
   mutate(
-    Effect = .data[[params$comparison_group]] -
-      .data[[params$reference_group]]
-  )
-
-effect_table <- effect_long |>
-  select(.data$Protein, .data$Time, .data$Effect) |>
-  pivot_wider(names_from = .data$Time, values_from = .data$Effect)
-time_columns <- as.character(time_values)
-effect_matrix <- as.matrix(effect_table[, time_columns, drop = FALSE])
-storage.mode(effect_matrix) <- "double"
-rownames(effect_matrix) <- effect_table$Protein
-
-if (any(!is.finite(effect_matrix))) {
+    FullModelRSquared = limma_r_squared[match(.data$Protein, rownames(expression_matrix))],
+    DifferentialTimeInteraction =
+      .data$InteractionAdjustedPValue <= params$limma_interaction_fdr
+  ) |>
+  arrange(.data$InteractionAdjustedPValue)
+limma_differential_proteins <- limma_results |>
+  filter(.data$DifferentialTimeInteraction) |>
+  pull(.data$Protein)
+if (!length(limma_differential_proteins)) {
   stop(
-    "The balanced coverage filter should produce complete condition means, but missing effects remain.",
+    "No proteins passed the limma-spline interaction FDR; Mfuzz cannot proceed.",
     call. = FALSE
   )
 }
 
-effect_eset <- Biobase::ExpressionSet(
-  assayData = effect_matrix,
-  phenoData = Biobase::AnnotatedDataFrame(data.frame(
-    Time = time_values,
-    row.names = time_columns
-  ))
-)
-
-# No values should be removed here; these calls make the Mfuzz preprocessing
-# explicit and guard against unexpected missing or constant effect profiles.
-mfuzz_filter_log <- capture.output(
-  effect_eset <- Mfuzz::filter.NA(effect_eset, thres = 0)
-)
-mfuzz_sd_log <- capture.output(
-  effect_eset <- Mfuzz::filter.std(effect_eset, min.std = 0, visu = FALSE)
-)
-standardized_eset <- Mfuzz::standardise(effect_eset)
-fuzzifier <- Mfuzz::mestimate(standardized_eset)
-
-maximum_candidate <- min(
-  as.integer(params$max_clusters),
-  nrow(Biobase::exprs(standardized_eset)) - 1L
-)
-cluster_candidates <- seq.int(
-  as.integer(params$min_clusters),
-  maximum_candidate
-)
-if (length(cluster_candidates) < 2L) {
-  stop("At least two candidate cluster counts are required.", call. = FALSE)
-}
-
-set.seed(as.integer(params$random_seed))
-minimum_centroid_distance <- Mfuzz::Dmin(
-  standardized_eset,
-  m = fuzzifier,
-  crange = cluster_candidates,
-  repeats = as.integer(params$cluster_diagnostic_repeats),
-  visu = FALSE
-)
-set.seed(as.integer(params$random_seed))
-nonempty_clusters <- Mfuzz::cselection(
-  standardized_eset,
-  m = fuzzifier,
-  crange = cluster_candidates,
-  repeats = as.integer(params$cluster_diagnostic_repeats),
-  visu = FALSE
-)
-
-chosen_clusters <- choose_cluster_count(
-  cluster_candidates,
-  minimum_centroid_distance,
-  nonempty_clusters
-)
-
-set.seed(as.integer(params$random_seed))
-mfuzz_fit <- Mfuzz::mfuzz(
-  standardized_eset,
-  centers = chosen_clusters,
-  m = fuzzifier,
-  iter.max = 1000
-)
-
-membership_table <- as.data.frame(mfuzz_fit$membership) |>
-  rownames_to_column("Protein")
-names(membership_table)[-1] <- paste0(
-  "MembershipCluster", seq_len(chosen_clusters)
-)
-membership_matrix <- as.matrix(membership_table[, -1, drop = FALSE])
-
-cluster_assignments <- membership_table |>
+combined_significant_results <- full_join(
+  masigpro_results |>
+    rename_with(~ paste0("maSigPro_", .x), -Protein),
+  limma_results |>
+    rename_with(~ paste0("limmaSpline_", .x), -Protein),
+  by = "Protein"
+) |>
   mutate(
-    Cluster = as.integer(mfuzz_fit$cluster),
-    MaximumMembership = apply(membership_matrix, 1, max),
-    CoreMember = .data$MaximumMembership >= params$core_membership
+    SignificantInMaSigPro = .data$Protein %in% masigpro_differential_proteins,
+    SignificantInLimmaSpline = .data$Protein %in% limma_differential_proteins,
+    SignificanceCategory = case_when(
+      .data$SignificantInMaSigPro & .data$SignificantInLimmaSpline ~
+        "Both methods",
+      .data$SignificantInMaSigPro ~ "maSigPro only",
+      .data$SignificantInLimmaSpline ~ "limma-spline only",
+      TRUE ~ "Not significant"
+    )
   ) |>
-  relocate(
-    .data$Protein, .data$Cluster, .data$MaximumMembership,
-    .data$CoreMember
+  filter(.data$SignificanceCategory != "Not significant") |>
+  arrange(
+    factor(
+      .data$SignificanceCategory,
+      levels = c("Both methods", "maSigPro only", "limma-spline only")
+    ),
+    .data$maSigPro_OverallModelAdjustedPValue,
+    .data$limmaSpline_InteractionAdjustedPValue
   )
 
-centroid_table <- as.data.frame(mfuzz_fit$centers) |>
-  rownames_to_column("Cluster") |>
-  mutate(Cluster = as.integer(.data$Cluster))
-names(centroid_table)[-1] <- paste0("Time", time_values)
+method_overlap_summary <- combined_significant_results |>
+  dplyr::count(.data$SignificanceCategory, name = "Proteins") |>
+  complete(
+    SignificanceCategory = c(
+      "Both methods", "maSigPro only", "limma-spline only"
+    ),
+    fill = list(Proteins = 0L)
+  )
+```
 
-cluster_diagnostics <- tibble(
-  CandidateClusters = cluster_candidates,
-  MinimumCentroidDistance = minimum_centroid_distance,
-  MedianNonemptyClusters = apply(nonempty_clusters, 2, stats::median),
-  MinimumNonemptyClusters = apply(nonempty_clusters, 2, min),
-  MaximumNonemptyClusters = apply(nonempty_clusters, 2, max),
-  Selected = cluster_candidates == chosen_clusters
+```{r run-method-specific-mfuzz, include=FALSE}
+masigpro_mfuzz <- fit_method_mfuzz(
+  "Orthogonal maSigPro",
+  masigpro_differential_proteins,
+  protein_data,
+  time_values,
+  groups,
+  params
+)
+limma_mfuzz <- fit_method_mfuzz(
+  "limma-spline",
+  limma_differential_proteins,
+  protein_data,
+  time_values,
+  groups,
+  params
+)
+mfuzz_parameter_comparison <- bind_rows(
+  masigpro_mfuzz$parameters,
+  limma_mfuzz$parameters
 )
 
-cluster_summary <- cluster_assignments |>
-  group_by(.data$Cluster) |>
+union_trajectory_summary <- protein_data |>
+  filter(.data$Protein %in% combined_significant_results$Protein) |>
+  group_by(.data$Protein, .data$Time, .data$Group) |>
   summarise(
-    Proteins = n(),
-    CoreProteins = sum(.data$CoreMember),
-    MedianMaximumMembership = stats::median(.data$MaximumMembership),
+    MeanLog2Abundance = mean(.data$Log2Abundance, na.rm = TRUE),
     .groups = "drop"
   ) |>
-  left_join(
-    effect_long |>
-      inner_join(
-        cluster_assignments |>
-          select(.data$Protein, .data$Cluster),
-        by = "Protein"
-      ) |>
-      group_by(.data$Cluster, .data$Time) |>
-      summarise(MedianEffect = stats::median(.data$Effect), .groups = "drop") |>
-      group_by(.data$Cluster) |>
-      summarise(
-        PeakPositiveTime = .data$Time[which.max(.data$MedianEffect)],
-        PeakNegativeTime = .data$Time[which.min(.data$MedianEffect)],
-        EarlyMedianEffect = .data$MedianEffect[which.min(.data$Time)],
-        LateMedianEffect = .data$MedianEffect[which.max(.data$Time)],
-        .groups = "drop"
-      ),
-    by = "Cluster"
+  pivot_wider(names_from = .data$Group, values_from = .data$MeanLog2Abundance) |>
+  mutate(
+    Effect = .data[[params$comparison_group]] -
+      .data[[params$reference_group]]
+  ) |>
+  arrange(.data$Protein, .data$Time) |>
+  group_by(.data$Protein) |>
+  summarise(
+    EarlyEffect = first(.data$Effect),
+    LateEffect = last(.data$Effect),
+    .groups = "drop"
+  ) |>
+  mutate(
+    TrajectorySummary = paste0(
+      params$comparison_group, " − ", params$reference_group, ": ",
+      sprintf("%+.2f", .data$EarlyEffect), " → ",
+      sprintf("%+.2f", .data$LateEffect), " log2"
+    )
   )
+
+combined_interpretation_results <- combined_significant_results |>
+  transmute(
+    Protein = .data$Protein,
+    SignificanceCategory = .data$SignificanceCategory,
+    maSigPro_AdjPValue = .data$maSigPro_OverallModelAdjustedPValue,
+    maSigPro_RSquared = .data$maSigPro_ModelRSquared,
+    limma_AdjPValue = .data$limmaSpline_InteractionAdjustedPValue
+  ) |>
+  left_join(
+    masigpro_mfuzz$assignments |>
+      transmute(
+        Protein = .data$Protein,
+        maSigPro_Cluster = .data$Cluster,
+        maSigPro_Membership = .data$MaximumMembership
+      ),
+    by = "Protein"
+  ) |>
+  left_join(
+    limma_mfuzz$assignments |>
+      transmute(
+        Protein = .data$Protein,
+        limma_Cluster = .data$Cluster,
+        limma_Membership = .data$MaximumMembership
+      ),
+    by = "Protein"
+  ) |>
+  left_join(
+    union_trajectory_summary |>
+      select(.data$Protein, .data$TrajectorySummary),
+    by = "Protein"
+  )
+
+# Backward-compatible report aliases point to the orthogonal-maSigPro branch.
+significant_all <- masigpro_significant_all
+significant_each <- masigpro_significant_each
+significant_groups <- masigpro_significant_groups
+variable_significance <- masigpro_variable_significance
+variable_counts <- masigpro_variable_counts
+interaction_variables <- masigpro_interaction_variables
+differential_time_proteins <- masigpro_differential_proteins
+group_counts <- masigpro_group_counts
+condition_summary <- masigpro_mfuzz$condition_summary
+effect_long <- masigpro_mfuzz$effect_long
+effect_eset <- masigpro_mfuzz$effect_expression_set
+standardized_eset <- masigpro_mfuzz$standardized_expression_set
+fuzzifier <- masigpro_mfuzz$fuzzifier
+cluster_candidates <- masigpro_mfuzz$cluster_candidates
+chosen_clusters <- masigpro_mfuzz$selected_clusters
+mfuzz_fit <- masigpro_mfuzz$fit
+cluster_assignments <- masigpro_mfuzz$assignments
+centroid_table <- masigpro_mfuzz$centroids
+cluster_diagnostics <- masigpro_mfuzz$diagnostics
+cluster_summary <- masigpro_mfuzz$cluster_summary
 ```
 
 ```{r save-results, include=FALSE}
 filter_file <- write_result(protein_coverage, "timecourse_protein_coverage.csv")
-design_file <- write_result(
+masigpro_design_file <- write_result(
   rownames_to_column(as.data.frame(masigpro_design$dis), "Run"),
   "masigpro_design_matrix.csv"
 )
-model_file <- write_result(masigpro_results, "masigpro_model_results.csv")
+limma_design_file <- write_result(
+  rownames_to_column(as.data.frame(limma_design), "Run"),
+  "limma_spline_design_matrix.csv"
+)
+masigpro_model_file <- write_result(
+  masigpro_results, "masigpro_model_results.csv"
+)
+limma_model_file <- write_result(
+  limma_results, "limma_spline_model_results.csv"
+)
+combined_model_file <- write_result(
+  combined_significant_results,
+  "timecourse_combined_significant_proteins.csv"
+)
 variable_file <- write_result(
-  variable_significance,
+  masigpro_variable_significance,
   "masigpro_significant_proteins_by_variable.csv"
 )
-condition_file <- write_result(
-  condition_summary,
-  "timecourse_condition_means.csv"
+masigpro_condition_file <- write_result(
+  masigpro_mfuzz$condition_summary,
+  "masigpro_timecourse_condition_means.csv"
 )
-effect_file <- write_result(effect_long, "timecourse_group_difference_effects.csv")
-membership_file <- write_result(
-  cluster_assignments,
-  "mfuzz_cluster_membership.csv"
+limma_condition_file <- write_result(
+  limma_mfuzz$condition_summary,
+  "limma_spline_timecourse_condition_means.csv"
 )
-centroid_file <- write_result(centroid_table, "mfuzz_cluster_centroids.csv")
-cluster_summary_file <- write_result(
-  cluster_summary,
-  "mfuzz_cluster_summary.csv"
+masigpro_effect_file <- write_result(
+  masigpro_mfuzz$effect_long,
+  "masigpro_timecourse_group_difference_effects.csv"
 )
-diagnostic_file <- write_result(
-  cluster_diagnostics,
-  "mfuzz_cluster_number_diagnostics.csv"
+limma_effect_file <- write_result(
+  limma_mfuzz$effect_long,
+  "limma_spline_timecourse_group_difference_effects.csv"
+)
+masigpro_membership_file <- write_result(
+  masigpro_mfuzz$assignments,
+  "masigpro_mfuzz_cluster_membership.csv"
+)
+limma_membership_file <- write_result(
+  limma_mfuzz$assignments,
+  "limma_spline_mfuzz_cluster_membership.csv"
+)
+masigpro_centroid_file <- write_result(
+  masigpro_mfuzz$centroids,
+  "masigpro_mfuzz_cluster_centroids.csv"
+)
+limma_centroid_file <- write_result(
+  limma_mfuzz$centroids,
+  "limma_spline_mfuzz_cluster_centroids.csv"
+)
+masigpro_cluster_summary_file <- write_result(
+  masigpro_mfuzz$cluster_summary,
+  "masigpro_mfuzz_cluster_summary.csv"
+)
+limma_cluster_summary_file <- write_result(
+  limma_mfuzz$cluster_summary,
+  "limma_spline_mfuzz_cluster_summary.csv"
+)
+masigpro_diagnostic_file <- write_result(
+  masigpro_mfuzz$diagnostics,
+  "masigpro_mfuzz_cluster_number_diagnostics.csv"
+)
+limma_diagnostic_file <- write_result(
+  limma_mfuzz$diagnostics,
+  "limma_spline_mfuzz_cluster_number_diagnostics.csv"
+)
+mfuzz_parameter_file <- write_result(
+  mfuzz_parameter_comparison,
+  "mfuzz_method_parameter_comparison.csv"
 )
 
 saveRDS(
@@ -669,17 +1409,32 @@ saveRDS(
       regression_design = masigpro_design,
       p_vector = masigpro_fit,
       t_fit = masigpro_tfit,
-      significant_by_variable = variable_significance,
-      differential_time_proteins = differential_time_proteins
+      significant_by_variable = masigpro_variable_significance,
+      differential_time_proteins = masigpro_differential_proteins,
+      results = masigpro_results
     ),
+    limmaSpline = list(
+      design = limma_design,
+      fit = limma_fit,
+      interaction_columns = limma_interaction_columns,
+      differential_time_proteins = limma_differential_proteins,
+      results = limma_results
+    ),
+    combined_significant_results = combined_significant_results,
+    combined_interpretation_results = combined_interpretation_results,
     Mfuzz = list(
-      effect_expression_set = effect_eset,
-      standardized_expression_set = standardized_eset,
-      fuzzifier = fuzzifier,
-      cluster_diagnostics = cluster_diagnostics,
-      selected_clusters = chosen_clusters,
-      fit = mfuzz_fit,
-      assignments = cluster_assignments
+      effect_expression_set = masigpro_mfuzz$effect_expression_set,
+      standardized_expression_set = masigpro_mfuzz$standardized_expression_set,
+      fuzzifier = masigpro_mfuzz$fuzzifier,
+      cluster_diagnostics = masigpro_mfuzz$diagnostics,
+      selected_clusters = masigpro_mfuzz$selected_clusters,
+      fit = masigpro_mfuzz$fit,
+      assignments = masigpro_mfuzz$assignments
+    ),
+    MfuzzByMethod = list(
+      maSigPro = masigpro_mfuzz,
+      limmaSpline = limma_mfuzz,
+      parameter_comparison = mfuzz_parameter_comparison
     ),
     parameters = params
   ),
@@ -698,14 +1453,16 @@ time points (`r paste(time_values, collapse = ", ")` hours), and two groups:
 cell contains `r paste(sort(unique(cell_sizes$AvailableReplicates)), collapse = ", ")`
 biological replicates.
 
-The two analyses answer different questions:
+The report uses two complementary differential-trajectory models and then
+clusters each model's selected proteins separately:
 
-- **maSigPro** performs formal regression tests for time-related protein
-  patterns and differences between the `r params$comparison_group` and `r
-  params$reference_group` trajectories.
-- **Mfuzz** performs exploratory soft clustering of the time-dependent `r
-  effect_label` effect among proteins selected by maSigPro. Membership values
-  describe how strongly each protein follows a cluster pattern.
+- **Orthogonal-polynomial maSigPro** uses backward term selection plus the
+  configured full-model FDR and minimum $R^2$.
+- **limma natural splines** jointly test all group-by-time spline terms with an
+  empirical-Bayes moderated F test.
+- **Mfuzz** is run independently on each significant-protein set so that their
+  trajectory clusters, fuzzifiers, memberships, and selected cluster counts
+  can be compared without mixing model inputs.
 
 # Detailed methods
 
@@ -732,9 +1489,9 @@ required to have a finite MSstats protein abundance in at least
 than an overall missing-value threshold. Proteins with zero variance across all
 samples were also removed.
 
-No additional sample-level values were imputed for maSigPro. Its Gaussian
-regressions used the observed finite values and required at least
-`r minimum_observations` observations per protein.
+No additional sample-level values were imputed. Both models used the observed
+finite values; maSigPro required at least `r minimum_observations` observations
+per protein.
 
 ## maSigPro regression
 
@@ -745,27 +1502,29 @@ with proteins in rows and independent samples in columns.
 
 Time was expressed as
 
-\[
+$$
 t = \frac{\text{hour} - `r baseline_time`}{`r params$time_unit`},
-\]
+$$
 
 so the intercept corresponds to `r baseline_time` hours and one time unit is
 `r params$time_unit` hours. Scaling improves numerical stability without
 changing the fitted curves.
 
-A degree-`r params$polynomial_degree` polynomial was used. With `r
-length(time_values)` time points, this model can represent broad monotonic and
+A degree-`r params$polynomial_degree` **orthogonal** polynomial basis from
+`poly(t, degree)` was used. With `r length(time_values)` time points, this model
+can represent broad monotonic and
 curved responses without fitting a separate parameter for every time point.
 With `r params$reference_group` as the reference, the model is conceptually
 
-\[
+$$
 y = \beta_0 + \beta_G G +
-\sum_{k=1}^{`r params$polynomial_degree`} \beta_k t^k +
-\sum_{k=1}^{`r params$polynomial_degree`} \gamma_k(Gt^k) + \epsilon,
-\]
+\sum_{k=1}^{`r params$polynomial_degree`} \beta_k P_k(t) +
+\sum_{k=1}^{`r params$polynomial_degree`} \gamma_k(GP_k(t)) + \epsilon,
+$$
 
-where \(G=1\) for `r params$comparison_group` and 0 for `r
-params$reference_group`. The \(\gamma_k\) interaction terms test whether the
+where $P_k(t)$ are mutually orthogonal polynomial basis columns and $G=1$
+for `r params$comparison_group` and 0 for `r params$reference_group`. The
+$\gamma_k$ interaction terms test whether the
 `r params$comparison_group` trajectory differs from `r params$reference_group`
 over time.
 
@@ -773,7 +1532,7 @@ over time.
 Gaussian F test. P-values were adjusted across proteins with Benjamini-Hochberg
 and the FDR threshold was `r params$model_fdr`. `T.fit()` then used backward
 variable selection with coefficient threshold `r params$coefficient_alpha`.
-`get.siggenes()` retained models with \(R^2 \ge `r params$min_r_squared`\).
+`get.siggenes()` retained models with $R^2 \ge `r params$min_r_squared`$.
 
 The set passed to Mfuzz was deliberately narrower than the overall maSigPro
 set: a protein had to be selected for at least one `r interaction_label`
@@ -781,17 +1540,80 @@ interaction (`r paste(interaction_variables, collapse = ", ")`). A significant
 constant group offset without a time interaction was not considered
 differential progression.
 
+## limma natural-spline regression
+
+[limma](https://bioconductor.org/packages/limma) fitted a natural-spline model
+with `r params$spline_df` time degrees of freedom:
+
+$$
+y_{pi} = \beta_{0p} + \beta_{Gp} G_i +
+\sum_{k=1}^{`r params$spline_df`} \beta_{kp} B_k(t_i) +
+\sum_{k=1}^{`r params$spline_df`} \gamma_{kp} G_i B_k(t_i) + \epsilon_{pi}.
+$$
+
+Here $y_{pi}$ is the normalized log2 abundance of protein $p$ in sample $i$,
+$t_i$ is its collection time, and $B_k(t_i)$ are the natural-spline basis
+functions. $G_i=1$ for `r params$comparison_group` and 0 for
+`r params$reference_group`. The $\beta_{kp}$ coefficients describe the reference
+group's time trajectory; $\beta_{Gp}$ describes a constant group offset; and
+the $\gamma_{kp}$ coefficients describe the time-dependent difference between
+the groups. The residual $\epsilon_{pi}$ represents variation around the
+fitted trajectory. limma moderates the protein-specific residual variances
+using empirical Bayes estimation.
+
+The joint interaction test asks whether all group-by-spline coefficients are
+zero:
+
+$$
+H_0: \gamma_{1p} = \cdots = \gamma_{`r params$spline_df`p} = 0.
+$$
+
+All group-by-spline coefficients were tested jointly with limma's moderated F
+statistic. Interaction p-values were adjusted across proteins with
+Benjamini-Hochberg, and proteins with adjusted p-value <=
+`r params$limma_interaction_fdr` were selected. The combined result table
+exports the joint F statistic, raw and adjusted interaction p-values, full-model
+$R^2$, every spline coefficient, and the moderated interaction t statistics.
+
+## How to interpret agreement between the models
+
+Both maSigPro and limma-spline test the same biological question — whether a
+protein's trajectory differs between groups — but they differ in how strict the
+test is. maSigPro sets a lower bar: a protein is flagged if *any one* of its
+polynomial pieces (linear, bend, or S-shape) shows a significant group
+difference, even if the rest of the curve looks identical between groups.
+limma-spline instead requires the *combined* evidence across all the trajectory
+pieces to clear the bar together, so it's better at confidently identifying
+features with a differential trajectory across most or all of the time course,
+but less likely to flag a feature whose difference shows up briefly at just one
+point in time.
+
+Because of this, maSigPro can pick up features with only a localized, transient
+trajectory difference that limma-spline might miss. In terms of digesting the
+results: features flagged by both methods carry more confidence and should
+visually show clean, consistent separation between groups across the time
+course. Features flagged by maSigPro alone may still be biologically real, but
+should be treated more cautiously — with only
+`r min(cell_sizes$AvailableReplicates)` replicates per group-time cell, each
+protein's noise estimate is itself imprecise, and a protein that happens to look
+artificially "quiet" by chance can produce an inflated significance for
+whichever single polynomial term picks up the wiggle. limma's variance
+moderation is built to guard against exactly this, which is part of why it
+doesn't flag these proteins — so maSigPro-only hits are worth inspecting in the
+raw replicate plots, and ideally corroborating before drawing strong
+conclusions, rather than being dismissed outright.
+
 ## Mfuzz soft clustering
 
 [Mfuzz](https://bioconductor.org/packages/Mfuzz) uses fuzzy c-means clustering.
 The package documentation recommends averaging replicates before clustering;
 therefore, observed log2 abundances were averaged within each group-time cell.
-For every maSigPro interaction protein, the clustering profile was
+For every significant protein from each method, the clustering profile was
 
-\[
+$$
 \Delta_t = \overline{y}_{\text{comparison},t} -
            \overline{y}_{\text{reference},t}
-\]
+$$
 
 at the `r length(time_values)` time points. Thus, the clusters describe the
 *shape of the `r effect_label` effect over time*, not merely abundance over time
@@ -803,16 +1625,14 @@ as safeguards. `standardise()` transformed each effect profile to mean zero and
 standard deviation one because Mfuzz uses Euclidean distance. Standardization
 affects cluster shape but not the log2-effect values reported in the tables.
 
-The fuzzifier was estimated from the data with `mestimate()` and equaled
-`r round(fuzzifier, 3)`. Candidate cluster counts from
-`r min(cluster_candidates)` through `r max(cluster_candidates)` were evaluated
-with `Dmin()` and `cselection()` using
-`r params$cluster_diagnostic_repeats` repeated starts. Counts that ever produced
-an empty cluster were excluded. Among the remaining counts, the selected value
-was the elbow with the largest distance below the straight line joining the
-first and last minimum-centroid-distance values. This selected
-**`r chosen_clusters` clusters**. The final clustering used a fixed seed and up
-to 1,000 iterations.
+The fuzzifier and cluster-number diagnostics were estimated independently for
+the maSigPro and limma-spline input sets. Candidate cluster counts from
+`r params$min_clusters` through at most `r params$max_clusters` were evaluated
+with Dmin and cselection using `r params$cluster_diagnostic_repeats` repeated
+starts. Counts that ever produced an empty cluster were excluded. Among the
+remaining counts, the selected value was the elbow with the largest distance
+below the straight line joining the first and last minimum-centroid-distance
+values. Final clustering used a fixed seed and up to 1,000 iterations.
 
 Proteins were assigned to their highest-membership cluster for summaries, but
 all membership values are exported. A core member has maximum membership at
@@ -823,14 +1643,14 @@ significance test.
 
 - maSigPro assumes independent residuals here; it is not a repeated-measures
   model.
-- Cubic polynomials summarize broad trajectories and should not be interpreted
-  as mechanistic kinetic models.
+- Orthogonal polynomial and spline basis coefficients are mathematical
+  components and should not be interpreted individually as mechanistic kinetic
+  effects.
 - The source values include MSstats feature-level model-based imputation. The
   per-cell coverage filter reduces, but does not eliminate, dependence on that
   earlier processing.
-- Backward variable selection and the interaction labels identify candidate
-  trajectory differences; important proteins should be inspected in the raw
-  replicate plots.
+- Backward variable selection is basis-dependent. limma's joint moderated test
+  is a complementary analysis, not a drop-in reproduction of maSigPro.
 - Mfuzz clusters and memberships are exploratory. Cluster membership does not
   supply a p-value or prove a biological pathway.
 
@@ -841,6 +1661,13 @@ filter_summary |>
   knitr::kable(
     caption = "Protein counts after each time-course filtering step."
   )
+```
+
+```{r filtering-table-columns, results='asis', echo=FALSE}
+column_guide(
+  names(filter_summary),
+  "Counts describe sequential filtering; a reduction between rows shows the effect of the newly applied rule."
+)
 ```
 
 ```{r coverage-distribution, fig.height=5, fig.cap="Minimum number of observed biological replicates across all group-time cells for each protein."}
@@ -861,11 +1688,11 @@ protein_coverage |>
   theme_bw()
 ```
 
-# maSigPro results
+# Orthogonal maSigPro results
 
 The overall model identified **`r masigpro_fit$i` proteins** at BH-adjusted
 FDR `r params$model_fdr`. After backward variable selection and the
-\(R^2\) threshold, **`r significant_all$sig.genes$g` proteins** retained an
+$R^2$ threshold, **`r significant_all$sig.genes$g` proteins** retained an
 adequate fitted trajectory. At least one `r interaction_label` interaction was selected
 for **`r length(differential_time_proteins)` proteins**; these were carried into
 Mfuzz.
@@ -875,6 +1702,13 @@ knitr::kable(
   head(rownames_to_column(as.data.frame(masigpro_design$dis), "Run"), 12),
   digits = 3,
   caption = "First 12 rows of the maSigPro regression design matrix."
+)
+```
+
+```{r masigpro-design-columns, results='asis', echo=FALSE}
+column_guide(
+  names(rownames_to_column(as.data.frame(masigpro_design$dis), "Run")),
+  "Design columns are mathematical predictors. Interpret the fitted trajectories and interaction tests rather than individual basis values in isolation."
 )
 ```
 
@@ -897,6 +1731,10 @@ group_counts |>
   knitr::kable(
     caption = "Proteins assigned to each maSigPro group-level component."
   )
+```
+
+```{r masigpro-group-count-columns, results='asis', echo=FALSE}
+column_guide(names(group_counts))
 ```
 
 ```{r top-interaction-trajectories, fig.height=11, fig.cap="Observed normalized protein abundances for the highest-R-squared proteins with a group-by-time interaction. Points are independent biological samples; lines connect group-time means."}
@@ -947,13 +1785,117 @@ DT::datatable(
     dom = "Bfrtip",
     buttons = c("copy", "csv")
   ),
-  caption = "Proteins with at least one selected comparison-group-by-time interaction."
+  caption = "Proteins with at least one selected orthogonal comparison-group-by-time interaction."
 )
 ```
 
-# Mfuzz results
+```{r masigpro-result-columns, results='asis', echo=FALSE}
+column_guide(
+  c(
+    "Protein", "OverallModelAdjustedPValue", "ModelRSquared",
+    "DifferentialTimeInteraction"
+  ),
+  "This compact table shows proteins entering the maSigPro-specific Mfuzz run. The complete maSigPro CSV contains the remaining term-level parameters."
+)
+```
 
-## Cluster-number diagnostics
+# limma-spline results
+
+The moderated joint group-by-spline test selected
+**`r length(limma_differential_proteins)` proteins** at BH-adjusted interaction
+FDR `r params$limma_interaction_fdr`. Unlike maSigPro's term-wise backward
+selection, this p-value tests all `r length(limma_interaction_columns)` spline
+interaction coefficients together.
+
+```{r limma-design}
+knitr::kable(
+  head(rownames_to_column(as.data.frame(limma_design), "Run"), 12),
+  digits = 3,
+  caption = "First 12 rows of the limma natural-spline design matrix."
+)
+```
+
+```{r limma-design-columns, results='asis', echo=FALSE}
+column_guide(
+  names(rownames_to_column(as.data.frame(limma_design), "Run")),
+  "Spline basis columns jointly encode time. The group-by-spline interaction columns are jointly tested for differential trajectories."
+)
+```
+
+```{r limma-results-table}
+DT::datatable(
+  limma_results |>
+    filter(.data$DifferentialTimeInteraction) |>
+    select(
+      .data$Protein,
+      .data$InteractionAdjustedPValue,
+      .data$InteractionF,
+      .data$FullModelRSquared
+    ),
+  rownames = FALSE,
+  filter = "top",
+  extensions = "Buttons",
+  options = list(
+    pageLength = 15,
+    scrollX = TRUE,
+    dom = "Bfrtip",
+    buttons = c("copy", "csv")
+  ),
+  caption = paste0(
+    "Proteins passing the limma-spline moderated joint interaction FDR. ",
+    "Complete coefficients and term statistics are available in ",
+    "limma_spline_model_results.csv."
+  )
+)
+```
+
+```{r limma-result-columns, results='asis', echo=FALSE}
+column_guide(
+  c(
+    "Protein", "InteractionAdjustedPValue", "InteractionF",
+    "FullModelRSquared"
+  ),
+  "Selection is based on InteractionAdjustedPValue. The downloadable model CSV retains every coefficient and moderated t statistic."
+)
+```
+
+# Method-specific Mfuzz comparison
+
+The two significant-protein sets were clustered independently. The following
+table reports the parameters needed to compare the runs directly.
+
+```{r mfuzz-parameter-comparison}
+mfuzz_parameter_display <- mfuzz_parameter_comparison |>
+  select(
+    .data$Method,
+    .data$SignificantProteins,
+    .data$SelectedClusters,
+    .data$Fuzzifier,
+    .data$CoreProteins,
+    .data$MedianMaximumMembership
+  ) |>
+  mutate(
+    Fuzzifier = round(.data$Fuzzifier, 3),
+    MedianMaximumMembership = round(.data$MedianMaximumMembership, 3)
+  )
+
+mfuzz_parameter_display |>
+  knitr::kable(caption = paste0(
+    "Key parameters and outcomes for the separate Mfuzz runs. Complete ",
+    "diagnostic settings are available in mfuzz_method_parameter_comparison.csv."
+  ))
+```
+
+```{r mfuzz-parameter-columns, results='asis', echo=FALSE}
+column_guide(
+  names(mfuzz_parameter_display),
+  "The maSigPro and limma-spline rows represent fully independent clustering runs. Complete candidate ranges, repeats, and backend details remain in the downloadable CSV."
+)
+```
+
+## Orthogonal-maSigPro Mfuzz results
+
+### Cluster-number diagnostics
 
 ```{r mfuzz-dmin, fig.height=5, fig.cap="Mfuzz minimum centroid distance across candidate cluster counts. The selected elbow is marked in red."}
 cluster_diagnostics |>
@@ -1015,6 +1957,13 @@ cluster_summary |>
       params$core_membership, "."
     )
   )
+```
+
+```{r mfuzz-cluster-summary-columns, results='asis', echo=FALSE}
+column_guide(
+  names(cluster_summary),
+  "Effects are comparison minus reference on the original log2-abundance scale. Cluster labels are arbitrary and should be interpreted from their trajectories."
+)
 ```
 
 ```{r mfuzz-standardized-profiles, fig.height=10, fig.cap="Standardized comparison-minus-reference protein effects used for Mfuzz clustering. Darker lines have higher membership in their assigned cluster; black lines are cluster centroids."}
@@ -1170,7 +2119,11 @@ ggplot(
 DT::datatable(
   cluster_assignments |>
     filter(.data$CoreMember) |>
-    arrange(.data$Cluster, desc(.data$MaximumMembership)),
+    arrange(.data$Cluster, desc(.data$MaximumMembership)) |>
+    select(
+      .data$Protein, .data$Cluster,
+      .data$MaximumMembership, .data$CoreMember
+    ),
   rownames = FALSE,
   filter = "top",
   extensions = "Buttons",
@@ -1184,6 +2137,154 @@ DT::datatable(
     "Mfuzz core proteins with maximum membership >= ",
     params$core_membership, "."
   )
+)
+```
+
+```{r mfuzz-core-columns, results='asis', echo=FALSE}
+column_guide(
+  c("Protein", "Cluster", "MaximumMembership", "CoreMember"),
+  "The HTML shows the assigned cluster and maximum membership. Membership in every candidate cluster remains available in the downloadable membership CSV."
+)
+```
+
+## limma-spline Mfuzz results
+
+```{r limma-mfuzz-diagnostics, fig.height=8, fig.cap="Independent Mfuzz cluster-number diagnostics for the limma-spline significant-protein set."}
+limma_mfuzz$diagnostics |>
+  select(
+    CandidateClusters, MinimumCentroidDistance,
+    MedianNonemptyClusters, MinimumNonemptyClusters,
+    MaximumNonemptyClusters, Selected
+  ) |>
+  pivot_longer(
+    c(MinimumCentroidDistance, MedianNonemptyClusters),
+    names_to = "Diagnostic", values_to = "Value"
+  ) |>
+  ggplot(aes(.data$CandidateClusters, .data$Value)) +
+  geom_line(color = "#C44E52", linewidth = 0.8) +
+  geom_point(aes(shape = .data$Selected), color = "#C44E52", size = 2.5) +
+  geom_vline(
+    xintercept = limma_mfuzz$selected_clusters,
+    linetype = "dashed", color = "#27445C"
+  ) +
+  facet_wrap(~Diagnostic, scales = "free_y", ncol = 1) +
+  scale_x_continuous(breaks = limma_mfuzz$cluster_candidates) +
+  labs(
+    title = paste(
+      "limma-spline Mfuzz selected",
+      limma_mfuzz$selected_clusters, "clusters"
+    ),
+    x = "Candidate clusters", y = NULL, shape = "Selected"
+  ) +
+  theme_bw()
+```
+
+```{r limma-mfuzz-cluster-summary}
+limma_mfuzz$cluster_summary |>
+  mutate(
+    MedianMaximumMembership = round(.data$MedianMaximumMembership, 3),
+    EarlyMedianEffect = round(.data$EarlyMedianEffect, 3),
+    LateMedianEffect = round(.data$LateMedianEffect, 3)
+  ) |>
+  knitr::kable(
+    caption = paste0(
+      "limma-spline Mfuzz cluster summary. Core membership >= ",
+      params$core_membership, "."
+    )
+  )
+```
+
+```{r limma-mfuzz-cluster-summary-columns, results='asis', echo=FALSE}
+column_guide(
+  names(limma_mfuzz$cluster_summary),
+  "These summaries use only limma-spline-selected proteins and are independent of the maSigPro Mfuzz clusters."
+)
+```
+
+```{r limma-mfuzz-standardized-profiles, fig.height=10, fig.cap="Standardized comparison-minus-reference effects for proteins selected by limma-spline, clustered independently with Mfuzz."}
+limma_standardized_profiles <- as.data.frame(
+  Biobase::exprs(limma_mfuzz$standardized_expression_set)
+) |>
+  rownames_to_column("Protein") |>
+  pivot_longer(
+    cols = -Protein,
+    names_to = "Time",
+    values_to = "StandardizedEffect"
+  ) |>
+  mutate(Time = as.numeric(.data$Time)) |>
+  inner_join(
+    limma_mfuzz$assignments |>
+      select(Protein, Cluster, MaximumMembership),
+    by = "Protein"
+  )
+
+limma_centroid_long <- limma_mfuzz$centroids |>
+  pivot_longer(
+    cols = starts_with("Time"),
+    names_to = "Time",
+    values_to = "StandardizedEffect"
+  ) |>
+  mutate(Time = as.numeric(sub("^Time", "", .data$Time)))
+
+ggplot(
+  limma_standardized_profiles,
+  aes(
+    .data$Time, .data$StandardizedEffect,
+    group = .data$Protein, color = .data$MaximumMembership
+  )
+) +
+  geom_line(alpha = 0.25, linewidth = 0.4) +
+  geom_line(
+    data = limma_centroid_long,
+    aes(
+      .data$Time, .data$StandardizedEffect,
+      group = .data$Cluster
+    ),
+    inherit.aes = FALSE,
+    color = "black",
+    linewidth = 1.2
+  ) +
+  facet_wrap(~Cluster, ncol = 2) +
+  scale_color_gradient(low = "#F2D7D9", high = "#C44E52") +
+  labs(
+    title = "limma-spline Mfuzz differential-effect profiles",
+    x = "Time (hours)",
+    y = paste("Standardized", effect_label, "effect"),
+    color = "Membership"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+```{r limma-mfuzz-core-table}
+DT::datatable(
+  limma_mfuzz$assignments |>
+    filter(.data$CoreMember) |>
+    arrange(.data$Cluster, desc(.data$MaximumMembership)) |>
+    select(
+      .data$Protein, .data$Cluster,
+      .data$MaximumMembership, .data$CoreMember
+    ),
+  rownames = FALSE,
+  filter = "top",
+  extensions = "Buttons",
+  options = list(
+    pageLength = 15,
+    scrollX = TRUE,
+    dom = "Bfrtip",
+    buttons = c("copy", "csv")
+  ),
+  caption = paste0(
+    "limma-spline Mfuzz core proteins with maximum membership >= ",
+    params$core_membership, "."
+  )
+)
+```
+
+```{r limma-mfuzz-core-columns, results='asis', echo=FALSE}
+column_guide(
+  c("Protein", "Cluster", "MaximumMembership", "CoreMember"),
+  "These cluster labels belong only to the limma-spline Mfuzz run. Full memberships remain in the downloadable limma-spline membership CSV."
 )
 ```
 
@@ -1210,6 +2311,590 @@ if (length(extra_qmd_files)) {
 }
 ```
 
+# Combined significant-protein results
+
+The combined table contains the union of both significant-protein sets. It
+includes each model's test statistics, adjusted p-values, model fit, fitted
+coefficients, selection indicators, and a single `SignificanceCategory` column
+that records **Both methods**, **maSigPro only**, or **limma-spline only**.
+
+```{r method-overlap-counts, fig.height=5}
+method_overlap_summary |>
+  mutate(
+    SignificanceCategory = factor(
+      .data$SignificanceCategory,
+      levels = c("Both methods", "maSigPro only", "limma-spline only")
+    )
+  ) |>
+  ggplot(aes(.data$SignificanceCategory, .data$Proteins,
+             fill = .data$SignificanceCategory)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = scales::comma(.data$Proteins)), vjust = -0.3) +
+  scale_fill_manual(values = c(
+    "Both methods" = "#8172B2",
+    "maSigPro only" = "#4C72B0",
+    "limma-spline only" = "#C44E52"
+  )) +
+  labs(
+    title = "Differential-trajectory selections by method",
+    x = NULL, y = "Proteins", fill = NULL
+  ) +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+```{r combined-results-table}
+combined_interpretation_display <- combined_interpretation_results |>
+  mutate(
+    maSigPro_AdjPValue = format_report_p(.data$maSigPro_AdjPValue),
+    maSigPro_RSquared = format_report_number(.data$maSigPro_RSquared),
+    limma_AdjPValue = format_report_p(.data$limma_AdjPValue),
+    maSigPro_Cluster = format_report_cluster(.data$maSigPro_Cluster),
+    maSigPro_Membership = format_report_number(.data$maSigPro_Membership),
+    limma_Cluster = format_report_cluster(.data$limma_Cluster),
+    limma_Membership = format_report_number(.data$limma_Membership)
+  )
+
+DT::datatable(
+  combined_interpretation_display,
+  rownames = FALSE,
+  filter = "top",
+  extensions = "Buttons",
+  options = list(
+    pageLength = 20,
+    scrollX = TRUE,
+    dom = "Bfrtip",
+    buttons = c("copy", "csv")
+  ),
+  caption = paste0(
+    "Compact interpretation table for the union of significant proteins using ",
+    "maSigPro overall FDR ",
+    params$model_fdr, ", coefficient alpha ", params$coefficient_alpha,
+    ", minimum R-squared ", params$min_r_squared,
+    ", and limma-spline interaction FDR ",
+    params$limma_interaction_fdr,
+    ". Complete statistics and coefficients are in ",
+    "timecourse_combined_significant_proteins.csv."
+  )
+)
+```
+
+```{r combined-result-columns, results='asis', echo=FALSE}
+column_guide(
+  names(combined_interpretation_results),
+  "A dash means that the protein did not have a retained model fit or was not clustered by that method. Method-specific cluster numbers are independent and should not be compared numerically."
+)
+```
+
+# Interactive significant-protein trajectory explorer
+
+Search and select any protein identified by either trajectory method. The
+dashboard updates entirely in the browser; no data are sent to a server. Raw
+points are independent biological replicates, solid lines connect group-time
+means, and vertical bars show one standard error above and below each mean.
+
+```{r prepare-trajectory-explorer, include=FALSE}
+explorer_time_spacing <- if (length(time_values) > 1L) {
+  min(diff(time_values))
+} else {
+  1
+}
+explorer_group_offsets <- setNames(
+  seq(-0.06, 0.06, length.out = length(groups)) * explorer_time_spacing,
+  groups
+)
+
+trajectory_explorer_points <- protein_data |>
+  filter(
+    .data$Protein %in% combined_interpretation_results$Protein,
+    is.finite(.data$Log2Abundance)
+  ) |>
+  transmute(
+    Protein = as.character(.data$Protein),
+    Run = as.character(.data$Run),
+    BioReplicate = as.character(.data$BioReplicate),
+    Time = as.numeric(.data$Time),
+    Group = as.character(.data$Group),
+    Log2Abundance = as.numeric(.data$Log2Abundance)
+  ) |>
+  arrange(.data$Protein, .data$Time, .data$Group, .data$BioReplicate) |>
+  group_by(.data$Protein, .data$Time, .data$Group) |>
+  mutate(
+    PointTime = .data$Time +
+      unname(explorer_group_offsets[.data$Group]) +
+      (row_number() - (n() + 1) / 2) * 0.012 * explorer_time_spacing
+  ) |>
+  ungroup()
+
+trajectory_explorer_means <- trajectory_explorer_points |>
+  group_by(.data$Protein, .data$Time, .data$Group) |>
+  summarise(
+    MeanLog2Abundance = mean(.data$Log2Abundance),
+    SDLog2Abundance = stats::sd(.data$Log2Abundance),
+    Replicates = n(),
+    SELog2Abundance = .data$SDLog2Abundance / sqrt(.data$Replicates),
+    LowerSE = .data$MeanLog2Abundance - .data$SELog2Abundance,
+    UpperSE = .data$MeanLog2Abundance + .data$SELog2Abundance,
+    .groups = "drop"
+  )
+
+trajectory_explorer_metadata <- combined_interpretation_results |>
+  transmute(
+    Protein = as.character(.data$Protein),
+    SignificanceCategory = as.character(.data$SignificanceCategory),
+    maSigPro_AdjPValue = format_report_p(.data$maSigPro_AdjPValue),
+    maSigPro_RSquared = format_report_number(.data$maSigPro_RSquared),
+    limma_AdjPValue = format_report_p(.data$limma_AdjPValue),
+    maSigPro_Cluster = format_report_cluster(.data$maSigPro_Cluster),
+    maSigPro_Membership = format_report_number(.data$maSigPro_Membership),
+    limma_Cluster = format_report_cluster(.data$limma_Cluster),
+    limma_Membership = format_report_number(.data$limma_Membership),
+    TrajectorySummary = as.character(.data$TrajectorySummary)
+  )
+
+trajectory_explorer_payload <- list(
+  points = trajectory_explorer_points,
+  means = trajectory_explorer_means,
+  metadata = trajectory_explorer_metadata,
+  groups = as.character(groups),
+  times = as.numeric(time_values)
+)
+
+trajectory_explorer_json <- jsonlite::toJSON(
+  trajectory_explorer_payload,
+  dataframe = "rows",
+  auto_unbox = TRUE,
+  na = "null",
+  digits = 10
+)
+# Prevent a value containing a literal closing script tag from terminating the
+# inert JSON element. The data are parsed locally by the classic script below.
+trajectory_explorer_json <- gsub(
+  "</",
+  "<\\/",
+  trajectory_explorer_json,
+  fixed = TRUE
+)
+```
+
+<style>
+.trajectory-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+  align-items: end;
+  margin: 1rem 0;
+}
+.trajectory-controls .cell,
+.trajectory-controls form {
+  margin: 0;
+  width: 100%;
+}
+.trajectory-control label {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+.trajectory-control input,
+.trajectory-control select {
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.4rem;
+  color: var(--bs-body-color);
+  min-height: 2.5rem;
+  padding: 0.45rem 0.65rem;
+  width: 100%;
+}
+.trajectory-match-count {
+  color: var(--bs-secondary-color);
+  font-size: 0.8rem;
+  margin-top: 0.3rem;
+}
+.trajectory-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.9rem;
+  margin: 1rem 0 1.25rem 0;
+}
+.trajectory-card {
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  border: 1px solid var(--bs-border-color);
+  border-top: 4px solid #4C72B0;
+  border-radius: 0.65rem;
+  box-shadow: 0 0.2rem 0.65rem rgba(39, 68, 92, 0.12);
+  padding: 0.85rem 1rem;
+  min-height: 8.5rem;
+}
+.trajectory-card--category { border-top-color: #8172B2; }
+.trajectory-card--limma { border-top-color: #C44E52; }
+.trajectory-card--effect { border-top-color: #55A868; }
+.trajectory-card-label {
+  color: var(--bs-secondary-color);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+}
+.trajectory-card-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+  overflow-wrap: anywhere;
+}
+.trajectory-card-detail {
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+.trajectory-badge {
+  background: #8172B2;
+  border-radius: 999px;
+  color: white;
+  display: inline-block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.28rem 0.65rem;
+}
+.trajectory-plot-card {
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.65rem;
+  box-shadow: 0 0.2rem 0.75rem rgba(39, 68, 92, 0.12);
+  margin-bottom: 1.5rem;
+  overflow-x: auto;
+  padding: 1rem;
+}
+.trajectory-plot-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem 0;
+}
+.trajectory-legend {
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.86rem;
+  gap: 0.85rem;
+  margin: 0.4rem 0 0.2rem 0;
+}
+.trajectory-legend-item {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
+}
+.trajectory-legend-swatch {
+  border-radius: 50%;
+  display: inline-block;
+  height: 0.7rem;
+  width: 0.7rem;
+}
+.trajectory-chart svg {
+  display: block;
+  height: auto;
+  min-width: 520px;
+  width: 100%;
+}
+.trajectory-chart text {
+  fill: currentColor;
+  font-family: var(--bs-body-font-family);
+}
+.trajectory-chart .trajectory-grid {
+  stroke: currentColor;
+  stroke-opacity: 0.12;
+}
+.trajectory-chart .trajectory-axis {
+  stroke: currentColor;
+  stroke-opacity: 0.45;
+}
+.trajectory-plot-note {
+  color: var(--bs-secondary-color);
+  font-size: 0.84rem;
+  margin-top: 0.35rem;
+}
+.trajectory-dashboard-error {
+  border: 1px solid #C44E52;
+  border-radius: 0.5rem;
+  color: #C44E52;
+  padding: 0.8rem 1rem;
+}
+</style>
+
+```{r trajectory-explorer-data, echo=FALSE, results='asis'}
+cat(
+  '<script type="application/json" id="trajectory-explorer-data">',
+  trajectory_explorer_json,
+  '</script>',
+  sep = ""
+)
+```
+
+```{=html}
+<div id="trajectory-explorer-dashboard">
+  <div class="trajectory-controls">
+    <div class="trajectory-control">
+      <label for="trajectory-protein-search">Search significant proteins</label>
+      <input id="trajectory-protein-search" type="search" placeholder="Type all or part of a protein identifier" autocomplete="off">
+      <div id="trajectory-match-count" class="trajectory-match-count" aria-live="polite"></div>
+    </div>
+    <div class="trajectory-control">
+      <label for="trajectory-protein-select">Select protein</label>
+      <select id="trajectory-protein-select"></select>
+    </div>
+  </div>
+  <div id="trajectory-result-cards" class="trajectory-card-grid" aria-live="polite"></div>
+  <div class="trajectory-plot-card">
+    <div id="trajectory-plot-title" class="trajectory-plot-title"></div>
+    <div id="trajectory-legend" class="trajectory-legend" aria-label="Group legend"></div>
+    <div id="trajectory-chart" class="trajectory-chart"></div>
+    <div class="trajectory-plot-note">Replicate points are slightly offset horizontally to reduce overlap. Lines show group means; vertical bars show ±1 standard error. Hover over a point for its details.</div>
+  </div>
+  <div id="trajectory-dashboard-error" class="trajectory-dashboard-error" hidden></div>
+</div>
+
+<noscript><p class="trajectory-dashboard-error">Enable JavaScript to use the interactive trajectory explorer.</p></noscript>
+
+<script id="trajectory-dashboard-script">
+(function () {
+  "use strict";
+
+  const dashboard = document.getElementById("trajectory-explorer-dashboard");
+  const errorBox = document.getElementById("trajectory-dashboard-error");
+
+  try {
+    const payloadElement = document.getElementById("trajectory-explorer-data");
+    const data = JSON.parse(payloadElement.textContent);
+    const search = document.getElementById("trajectory-protein-search");
+    const select = document.getElementById("trajectory-protein-select");
+    const matchCount = document.getElementById("trajectory-match-count");
+    const cards = document.getElementById("trajectory-result-cards");
+    const chart = document.getElementById("trajectory-chart");
+    const plotTitle = document.getElementById("trajectory-plot-title");
+    const legend = document.getElementById("trajectory-legend");
+    const palette = ["#4C72B0", "#C44E52", "#55A868", "#8172B2", "#CCB974", "#64B5CD"];
+    const metadataByProtein = new Map(data.metadata.map(row => [row.Protein, row]));
+    const proteins = data.metadata.map(row => row.Protein).sort((a, b) => a.localeCompare(b));
+    const pointsByProtein = groupByProtein(data.points);
+    const meansByProtein = groupByProtein(data.means);
+
+    function groupByProtein(rows) {
+      const grouped = new Map();
+      rows.forEach(row => {
+        if (!grouped.has(row.Protein)) grouped.set(row.Protein, []);
+        grouped.get(row.Protein).push(row);
+      });
+      return grouped;
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? "NA" : value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function displayValue(value) {
+      return value == null || value === "" ? "NA" : value;
+    }
+
+    function updateOptions() {
+      const query = search.value.trim().toLocaleLowerCase();
+      const current = select.value;
+      const matches = query
+        ? proteins.filter(protein => protein.toLocaleLowerCase().includes(query))
+        : proteins;
+
+      select.replaceChildren();
+      matches.forEach(protein => {
+        const option = document.createElement("option");
+        option.value = protein;
+        option.textContent = protein;
+        select.appendChild(option);
+      });
+      matchCount.textContent = `${matches.length.toLocaleString()} of ${proteins.length.toLocaleString()} significant proteins`;
+      select.disabled = matches.length === 0;
+
+      if (!matches.length) {
+        showNoMatch();
+        return;
+      }
+      select.value = matches.includes(current) ? current : matches[0];
+      updateDashboard(select.value);
+    }
+
+    function showNoMatch() {
+      cards.innerHTML = `<div class="trajectory-card trajectory-card--category">
+        <div class="trajectory-card-label">Protein search</div>
+        <div class="trajectory-card-value">No matching protein</div>
+        <div class="trajectory-card-detail">Change the search text to restore matching significant proteins.</div>
+      </div>`;
+      plotTitle.textContent = "No trajectory selected";
+      legend.replaceChildren();
+      chart.replaceChildren();
+    }
+
+    function updateDashboard(protein) {
+      const result = metadataByProtein.get(protein);
+      if (!result) {
+        showNoMatch();
+        return;
+      }
+      cards.innerHTML = `<div class="trajectory-card trajectory-card--category">
+          <div class="trajectory-card-label">Selected protein</div>
+          <div class="trajectory-card-value">${escapeHtml(result.Protein)}</div>
+          <div class="trajectory-card-detail"><span class="trajectory-badge">${escapeHtml(result.SignificanceCategory)}</span></div>
+        </div>
+        <div class="trajectory-card">
+          <div class="trajectory-card-label">Orthogonal maSigPro</div>
+          <div class="trajectory-card-value">Adjusted p: ${escapeHtml(displayValue(result.maSigPro_AdjPValue))}</div>
+          <div class="trajectory-card-detail">R-squared: ${escapeHtml(displayValue(result.maSigPro_RSquared))}<br>Cluster: ${escapeHtml(displayValue(result.maSigPro_Cluster))}<br>Maximum membership: ${escapeHtml(displayValue(result.maSigPro_Membership))}</div>
+        </div>
+        <div class="trajectory-card trajectory-card--limma">
+          <div class="trajectory-card-label">limma-spline</div>
+          <div class="trajectory-card-value">Adjusted p: ${escapeHtml(displayValue(result.limma_AdjPValue))}</div>
+          <div class="trajectory-card-detail">Cluster: ${escapeHtml(displayValue(result.limma_Cluster))}<br>Maximum membership: ${escapeHtml(displayValue(result.limma_Membership))}</div>
+        </div>
+        <div class="trajectory-card trajectory-card--effect">
+          <div class="trajectory-card-label">Observed trajectory summary</div>
+          <div class="trajectory-card-value">${escapeHtml(displayValue(result.TrajectorySummary))}</div>
+          <div class="trajectory-card-detail">Earliest to latest observed comparison-minus-reference log2 effect.</div>
+        </div>`;
+      plotTitle.textContent = `${protein}: observed protein trajectories`;
+      renderLegend();
+      renderChart(protein);
+    }
+
+    function renderLegend() {
+      legend.replaceChildren();
+      data.groups.forEach((group, index) => {
+        const item = document.createElement("span");
+        item.className = "trajectory-legend-item";
+        const swatch = document.createElement("span");
+        swatch.className = "trajectory-legend-swatch";
+        swatch.style.backgroundColor = palette[index % palette.length];
+        const label = document.createElement("span");
+        label.textContent = group;
+        item.append(swatch, label);
+        legend.appendChild(item);
+      });
+    }
+
+    function renderChart(protein) {
+      const points = pointsByProtein.get(protein) || [];
+      const means = meansByProtein.get(protein) || [];
+      chart.replaceChildren();
+      if (!points.length) {
+        chart.textContent = "No trajectory data are available for this protein.";
+        return;
+      }
+
+      const svgNS = "http://www.w3.org/2000/svg";
+      const width = 1050;
+      const height = 520;
+      const margin = {top: 22, right: 28, bottom: 62, left: 78};
+      const innerWidth = width - margin.left - margin.right;
+      const innerHeight = height - margin.top - margin.bottom;
+      const numeric = value => Number.isFinite(Number(value));
+      const xValues = points.map(row => Number(row.PointTime)).filter(Number.isFinite)
+        .concat(data.times.map(Number).filter(Number.isFinite));
+      const yValues = points.map(row => Number(row.Log2Abundance)).filter(Number.isFinite);
+      means.forEach(row => {
+        if (numeric(row.LowerSE)) yValues.push(Number(row.LowerSE));
+        if (numeric(row.UpperSE)) yValues.push(Number(row.UpperSE));
+      });
+      let xMin = Math.min(...xValues);
+      let xMax = Math.max(...xValues);
+      let yMin = Math.min(...yValues);
+      let yMax = Math.max(...yValues);
+      if (xMin === xMax) { xMin -= 0.5; xMax += 0.5; }
+      if (yMin === yMax) { yMin -= 0.5; yMax += 0.5; }
+      const xPad = (xMax - xMin) * 0.025;
+      const yPad = (yMax - yMin) * 0.08;
+      xMin -= xPad;
+      xMax += xPad;
+      yMin -= yPad;
+      yMax += yPad;
+      const xScale = value => margin.left + ((Number(value) - xMin) / (xMax - xMin)) * innerWidth;
+      const yScale = value => margin.top + innerHeight - ((Number(value) - yMin) / (yMax - yMin)) * innerHeight;
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", `Observed protein trajectories for ${protein}`);
+
+      function addElement(name, attributes, parent = svg) {
+        const element = document.createElementNS(svgNS, name);
+        Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, value));
+        parent.appendChild(element);
+        return element;
+      }
+
+      data.times.forEach(time => {
+        const x = xScale(time);
+        addElement("line", {x1: x, x2: x, y1: margin.top, y2: margin.top + innerHeight, class: "trajectory-grid"});
+        const label = addElement("text", {x: x, y: margin.top + innerHeight + 25, "text-anchor": "middle", "font-size": 12});
+        label.textContent = time;
+      });
+
+      const yTicks = 6;
+      for (let index = 0; index < yTicks; index += 1) {
+        const value = yMin + ((yMax - yMin) * index) / (yTicks - 1);
+        const y = yScale(value);
+        addElement("line", {x1: margin.left, x2: margin.left + innerWidth, y1: y, y2: y, class: "trajectory-grid"});
+        const label = addElement("text", {x: margin.left - 10, y: y + 4, "text-anchor": "end", "font-size": 12});
+        label.textContent = value.toFixed(yMax - yMin < 3 ? 2 : 1);
+      }
+
+      addElement("line", {x1: margin.left, x2: margin.left + innerWidth, y1: margin.top + innerHeight, y2: margin.top + innerHeight, class: "trajectory-axis"});
+      addElement("line", {x1: margin.left, x2: margin.left, y1: margin.top, y2: margin.top + innerHeight, class: "trajectory-axis"});
+      const xLabel = addElement("text", {x: margin.left + innerWidth / 2, y: height - 14, "text-anchor": "middle", "font-size": 13, "font-weight": 600});
+      xLabel.textContent = "Time (hours)";
+      const yLabel = addElement("text", {x: 18, y: margin.top + innerHeight / 2, "text-anchor": "middle", "font-size": 13, "font-weight": 600, transform: `rotate(-90 18 ${margin.top + innerHeight / 2})`});
+      yLabel.textContent = "MSstats normalized log2 abundance";
+
+      data.groups.forEach((group, groupIndex) => {
+        const color = palette[groupIndex % palette.length];
+        const groupMeans = means.filter(row => row.Group === group).sort((a, b) => Number(a.Time) - Number(b.Time));
+        groupMeans.forEach(row => {
+          if (numeric(row.LowerSE) && numeric(row.UpperSE)) {
+            addElement("line", {x1: xScale(row.Time), x2: xScale(row.Time), y1: yScale(row.LowerSE), y2: yScale(row.UpperSE), stroke: color, "stroke-width": 1.8, "stroke-opacity": 0.8});
+          }
+        });
+        if (groupMeans.length) {
+          const pathData = groupMeans.map((row, index) => `${index ? "L" : "M"}${xScale(row.Time)},${yScale(row.MeanLog2Abundance)}`).join(" ");
+          addElement("path", {d: pathData, fill: "none", stroke: color, "stroke-width": 2.8, "stroke-linejoin": "round", "stroke-linecap": "round"});
+        }
+        points.filter(row => row.Group === group).forEach(row => {
+          const dot = addElement("circle", {cx: xScale(row.PointTime), cy: yScale(row.Log2Abundance), r: 4.2, fill: color, "fill-opacity": 0.58, stroke: "white", "stroke-width": 0.7});
+          const title = document.createElementNS(svgNS, "title");
+          title.textContent = `${row.Protein}\n${row.Group}, ${row.Time} h\nBiological replicate: ${row.BioReplicate}\nRun: ${row.Run}\nlog2 abundance: ${Number(row.Log2Abundance).toFixed(2)}`;
+          dot.appendChild(title);
+        });
+        groupMeans.forEach(row => {
+          const dot = addElement("circle", {cx: xScale(row.Time), cy: yScale(row.MeanLog2Abundance), r: 5.2, fill: color, stroke: "white", "stroke-width": 1.1});
+          const title = document.createElementNS(svgNS, "title");
+          const se = numeric(row.SELog2Abundance) ? Number(row.SELog2Abundance).toFixed(2) : "NA";
+          title.textContent = `${row.Group}, ${row.Time} h mean\n${Number(row.MeanLog2Abundance).toFixed(2)} ± ${se} SE\nn = ${row.Replicates}`;
+          dot.appendChild(title);
+        });
+      });
+
+      chart.appendChild(svg);
+    }
+
+    search.addEventListener("input", updateOptions);
+    select.addEventListener("change", () => updateDashboard(select.value));
+    updateOptions();
+  } catch (error) {
+    dashboard.querySelectorAll(":scope > :not(.trajectory-dashboard-error)").forEach(element => element.hidden = true);
+    errorBox.hidden = false;
+    errorBox.textContent = `The trajectory dashboard could not be initialized: ${error.message}`;
+  }
+})();
+</script>
+```
+
 # Output files
 
 The complete tables are saved separately from the HTML report:
@@ -1218,32 +2903,59 @@ The complete tables are saved separately from the HTML report:
 tibble(
   File = basename(c(
     filter_file,
-    design_file,
-    model_file,
+    masigpro_design_file,
+    limma_design_file,
+    masigpro_model_file,
+    limma_model_file,
+    combined_model_file,
     variable_file,
-    condition_file,
-    effect_file,
-    membership_file,
-    centroid_file,
-    cluster_summary_file,
-    diagnostic_file,
+    masigpro_condition_file,
+    limma_condition_file,
+    masigpro_effect_file,
+    limma_effect_file,
+    masigpro_membership_file,
+    limma_membership_file,
+    masigpro_centroid_file,
+    limma_centroid_file,
+    masigpro_cluster_summary_file,
+    limma_cluster_summary_file,
+    masigpro_diagnostic_file,
+    limma_diagnostic_file,
+    mfuzz_parameter_file,
     file.path(output_dir, "timecourse_masigpro_mfuzz_objects.rds")
   )),
   Contents = c(
     "Coverage statistics for every protein",
-    "Regression design submitted to maSigPro",
-    "Overall and stepwise maSigPro model results",
+    "Orthogonal-polynomial design submitted to maSigPro",
+    "Natural-spline design submitted to limma",
+    "Overall and stepwise orthogonal-maSigPro model results",
+    "Moderated joint-interaction limma-spline model results",
+    "Union of significant proteins with both models' parameters and method label",
     "Proteins selected for each maSigPro model term",
-    "Observed group-time means and uncertainty",
-    "Comparison-minus-reference effects used for clustering",
-    "All Mfuzz memberships and assigned clusters",
-    "Standardized Mfuzz cluster centroids",
-    "Cluster sizes, core counts, and effect summaries",
-    "Dmin and non-empty-cluster diagnostics",
-    "Saved filtering, maSigPro, Mfuzz, and parameter objects"
+    "maSigPro-selected observed group-time means and uncertainty",
+    "limma-selected observed group-time means and uncertainty",
+    "maSigPro comparison-minus-reference clustering effects",
+    "limma-spline comparison-minus-reference clustering effects",
+    "maSigPro-set Mfuzz memberships and assigned clusters",
+    "limma-set Mfuzz memberships and assigned clusters",
+    "maSigPro-set standardized Mfuzz centroids",
+    "limma-set standardized Mfuzz centroids",
+    "maSigPro-set cluster sizes, core counts, and effects",
+    "limma-set cluster sizes, core counts, and effects",
+    "maSigPro-set Dmin and non-empty diagnostics",
+    "limma-set Dmin and non-empty diagnostics",
+    "Side-by-side Mfuzz input, fuzzifier, cluster, and membership parameters",
+    "Saved filtering, both models, both Mfuzz runs, and parameters"
   )
 ) |>
   knitr::kable(caption = "Machine-readable time-course analysis outputs.")
+```
+
+```{r output-file-columns, results='asis', echo=FALSE}
+column_guide(
+  c("File", "Contents"),
+  "CSV files contain complete machine-readable tables; the RDS preserves fitted objects and parameters for reproducible downstream work."
+)
 ```
 
 # Reproducibility

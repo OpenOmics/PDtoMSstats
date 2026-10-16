@@ -18,6 +18,7 @@ source(file.path(repo_root, "R", "input-functions.R"))
 source(file.path(repo_root, "R", "wrapper-functions.R"))
 
 stopifnot(identical(pdt_main_defaults()$gsea_pvalue_cutoff, 0.05))
+stopifnot(identical(pdt_main_defaults()$maximum_allowed_fold_change, 100))
 
 parsed <- pdt_parse_cli(c(
   "run",
@@ -30,7 +31,10 @@ parsed <- pdt_parse_cli(c(
   "--remove-few-measurements",
   "--de-pvalue-cutoff", "0.5",
   "--de-log2fc-cutoff", "0.25",
-  "--gsea-pvalue-cutoff", "0.5"
+  "--maximum-allowed-fold-change", "1000",
+  "--gsea-pvalue-cutoff", "0.5",
+  "--spline-df", "4",
+  "--limma-interaction-fdr", "0.1"
 ))
 stopifnot(
   identical(parsed$command, "run"),
@@ -41,7 +45,10 @@ stopifnot(
   identical(parsed$options$remove_few_measurements_value, TRUE),
   identical(parsed$options$de_pvalue_cutoff, "0.5"),
   identical(parsed$options$de_log2fc_cutoff, "0.25"),
-  identical(parsed$options$gsea_pvalue_cutoff, "0.5")
+  identical(parsed$options$maximum_allowed_fold_change, "1000"),
+  identical(parsed$options$gsea_pvalue_cutoff, "0.5"),
+  identical(parsed$options$spline_df, "4"),
+  identical(parsed$options$limma_interaction_fdr, "0.1")
 )
 
 alternative_psm <- data.frame(
@@ -109,6 +116,7 @@ options <- list(
   comparison_group = "Treatment",
   de_pvalue_cutoff = "0.5",
   de_log2fc_cutoff = "0.25",
+  maximum_allowed_fold_change = "1000",
   gsea_pvalue_cutoff = "0.5"
 )
 provided <- names(options)
@@ -123,6 +131,7 @@ stopifnot(
   identical(prepared$config$psm_intensity_column, "Intensity"),
   identical(prepared$config$differential_pvalue_cutoff, 0.5),
   identical(prepared$config$differential_log2fc_cutoff, 0.25),
+  identical(prepared$config$maximum_allowed_fold_change, 1000),
   identical(prepared$config$gsea_pvalue_cutoff, 0.5),
   isTRUE(prepared$config$file_name_from_file_id),
   isTRUE(prepared$config$bioreplicate_from_file_id),
@@ -144,7 +153,27 @@ stopifnot(
   identical(timecourse$time_column, "TimePoint"),
   identical(timecourse$group_column, "Infection"),
   identical(timecourse$reference_group, "Control"),
-  identical(timecourse$comparison_group, "Treatment")
+  identical(timecourse$comparison_group, "Treatment"),
+  identical(timecourse$polynomial_degree, 3L),
+  identical(timecourse$spline_df, 3L),
+  identical(timecourse$model_fdr, 0.05),
+  identical(timecourse$limma_interaction_fdr, 0.05)
+)
+
+custom_timecourse_options <- options
+custom_timecourse_options$spline_df <- "4"
+custom_timecourse_options$limma_interaction_fdr <- "0.1"
+custom_timecourse <- pdt_prepare_timecourse_config(
+  prepared$config,
+  prepared$annotation,
+  custom_timecourse_options,
+  names(custom_timecourse_options),
+  test_dir,
+  interactive_allowed = FALSE
+)
+stopifnot(
+  identical(custom_timecourse$spline_df, 4L),
+  identical(custom_timecourse$limma_interaction_fdr, 0.1)
 )
 
 config_file <- pdt_write_config(
@@ -160,14 +189,16 @@ stopifnot(any(grepl("^remove_shared_peptides: true$", written_text)))
 stopifnot(any(grepl("^run_gsea: false$", written_text)))
 stopifnot(any(grepl("^differential_pvalue_cutoff: 0.5$", written_text)))
 stopifnot(any(grepl("^differential_log2fc_cutoff: 0.25$", written_text)))
+stopifnot(identical(as.numeric(round_trip$maximum_allowed_fold_change), 1000))
 stopifnot(any(grepl("^gsea_pvalue_cutoff: 0.5$", written_text)))
 
 default_options <- options
 default_options$de_pvalue_cutoff <- NULL
 default_options$de_log2fc_cutoff <- NULL
+default_options$maximum_allowed_fold_change <- NULL
 default_provided <- setdiff(
   names(default_options),
-  c("de_pvalue_cutoff", "de_log2fc_cutoff")
+  c("de_pvalue_cutoff", "de_log2fc_cutoff", "maximum_allowed_fold_change")
 )
 default_prepared <- pdt_prepare_main_config(
   default_options,
@@ -176,6 +207,7 @@ default_prepared <- pdt_prepare_main_config(
   interactive_allowed = FALSE
 )
 stopifnot(
+  identical(default_prepared$config$maximum_allowed_fold_change, 100),
   identical(
     default_prepared$config$differential_pvalue_cutoff,
     default_prepared$config$volcano_p_cutoff
@@ -217,5 +249,21 @@ stopifnot(
   inherits(invalid_gsea_error, "error"),
   grepl("gsea_pvalue_cutoff", conditionMessage(invalid_gsea_error), fixed = TRUE)
 )
+
+for (invalid_limit in c("0", "-1", "Inf", "NaN", "not-a-number")) {
+  invalid_limit_options <- options
+  invalid_limit_options$maximum_allowed_fold_change <- invalid_limit
+  limit_error <- tryCatch(
+    pdt_prepare_main_config(
+      invalid_limit_options, names(invalid_limit_options), test_dir,
+      interactive_allowed = FALSE
+    ),
+    error = identity
+  )
+  stopifnot(
+    inherits(limit_error, "error"),
+    grepl("maximum_allowed_fold_change", conditionMessage(limit_error), fixed = TRUE)
+  )
+}
 
 cat("Wrapper parsing, mapping, and configuration: PASS\n")

@@ -184,7 +184,7 @@ singularity exec \
 
 The host `results` and `figures` directories receive the outputs.
 
-## Optional maSigPro and Mfuzz analysis
+## Optional maSigPro, limma-spline, and Mfuzz analysis
 
 Supplying a second YAML file is the time-course trigger:
 

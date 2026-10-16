@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+# Authors: Subrata Paul and Kevin Cormier
 
 pdt_help <- function() {
   cat(
@@ -37,6 +38,7 @@ Common options:
   --cores N                          MSstats processing cores
   --de-pvalue-cutoff NUMBER          Adjusted-p cutoff for Excel DE sheets
   --de-log2fc-cutoff NUMBER          Absolute log2FC cutoff for Excel DE sheets
+  --maximum-allowed-fold-change N    Excel protein-view ratio limit (default: 100)
   --gsea-pvalue-cutoff NUMBER        GSEA result-table p-value cutoff
   --extra-qmd FILE                   Append a custom QMD fragment; repeatable
   --report-template FILE             Replace the standard main QMD
@@ -64,6 +66,11 @@ Time-course options:
   --time-unit NUMBER
   --min-replicates N
   --polynomial-degree N
+  --spline-df N
+  --model-fdr NUMBER
+  --limma-interaction-fdr NUMBER
+  --coefficient-alpha NUMBER
+  --min-r-squared NUMBER
   --min-clusters N
   --max-clusters N
   --timecourse-extra-qmd FILE         Repeatable custom time-course fragment
@@ -261,7 +268,7 @@ if ("timecourse" %in% outputs) {
     timecourse_config$output_dir, timecourse_html_name
   )
   run_step(
-    "maSigPro and Mfuzz time-course analysis",
+    "maSigPro, limma-spline, and Mfuzz time-course analysis",
     "render_timecourse_report.R",
     c(execution_timecourse_config, timecourse_html_name)
   )
@@ -289,7 +296,8 @@ if ("excel" %in% outputs) {
     list(
       protein_file = protein_workbook,
       results_dir = main_config$output_dir,
-      output_file = workbook_file
+      output_file = workbook_file,
+      maximum_allowed_fold_change = main_config$maximum_allowed_fold_change
     ),
     workbook_job_file
   )

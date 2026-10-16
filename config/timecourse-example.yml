@@ -19,9 +19,11 @@ time_unit: 24
 # Require this many finite biological replicates in every group-time cell.
 min_replicates_per_cell: 4
 
-# maSigPro settings.
+# Orthogonal-maSigPro and limma natural-spline settings.
 polynomial_degree: 3
+spline_df: 3
 model_fdr: 0.05
+limma_interaction_fdr: 0.05
 coefficient_alpha: 0.05
 min_r_squared: 0.60
 

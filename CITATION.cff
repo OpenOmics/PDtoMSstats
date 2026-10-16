@@ -3,6 +3,8 @@ message: "If you use this workflow, cite this software and the scientific packag
 title: "PDtoMSstats: Proteome Discoverer PSM to MSstats workflow"
 type: software
 authors:
+  - family-names: "Paul"
+    given-names: "Subrata"
   - family-names: "Cormier"
     given-names: "Kevin"
 version: 0.1.2
