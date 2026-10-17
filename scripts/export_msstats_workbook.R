@@ -103,15 +103,16 @@ write_excel_labels <- function(
   workbook, sheet, labels, start_row = 1L, start_col = 1L
 ) {
   if (!nrow(labels)) return(invisible(workbook))
-  for (label_index in seq_len(nrow(labels))) {
-    writeData(
-      workbook, sheet, labels$value[[label_index]],
-      startRow = start_row + labels$row[[label_index]] - 1L,
-      startCol = start_col + labels$col[[label_index]] - 1L,
-      colNames = FALSE, rowNames = FALSE
+  write_sparse_columns(
+    workbook, sheet, data.frame(), 1L,
+    text_cells = data.frame(
+      row = start_row + labels$row - 1L,
+      column = start_col + labels$col - 1L,
+      value = labels$value,
+      stringsAsFactors = FALSE
     )
-  }
-  invisible(workbook)
+  )
+  invisible(NULL)
 }
 
 worksheet_last_used_column <- function(workbook, sheet) {
@@ -130,8 +131,10 @@ worksheet_last_used_column <- function(workbook, sheet) {
   max(used_columns)
 }
 
-repair_worksheet_dimensions <- function(workbook) {
+repair_worksheet_dimensions <- function(workbook, exclude_sheets = character()) {
   for (sheet_index in seq_along(workbook$worksheets)) {
+    if (names(workbook)[[sheet_index]] %in% exclude_sheets) next
+
     used_rows <- suppressWarnings(as.integer(
       workbook$worksheets[[sheet_index]]$sheet_data$rows
     ))
@@ -148,6 +151,234 @@ repair_worksheet_dimensions <- function(workbook) {
       "<dimension ref=\"A1:%s%d\"/>",
       int2col(max(used_columns)),
       max(used_rows)
+    )
+  }
+  invisible(workbook)
+}
+
+clear_worksheet_columns <- function(workbook, sheet, first_column) {
+  sheet_index <- match(sheet, names(workbook))
+  if (is.na(sheet_index)) {
+    stop("Worksheet was not found: ", sheet, call. = FALSE)
+  }
+
+  sheet_data <- workbook$worksheets[[sheet_index]]$sheet_data
+  keep <- !is.na(sheet_data$cols) & sheet_data$cols < first_column
+  if (all(keep)) return(invisible(workbook))
+
+  sheet_data$rows <- sheet_data$rows[keep]
+  sheet_data$cols <- sheet_data$cols[keep]
+  sheet_data$t <- sheet_data$t[keep]
+  sheet_data$v <- sheet_data$v[keep]
+  sheet_data$f <- sheet_data$f[keep]
+  if (length(sheet_data$style_id) == length(keep)) {
+    sheet_data$style_id <- sheet_data$style_id[keep]
+  }
+  sheet_data$n_elements <- as.integer(sum(keep))
+  if (!sheet_data$n_elements) sheet_data$data_count <- 0L
+  invisible(workbook)
+}
+
+write_sparse_columns <- function(
+  workbook, sheet, data, start_column, text_cells = NULL
+) {
+  sheet_index <- match(sheet, names(workbook))
+  if (is.na(sheet_index)) {
+    stop("Worksheet was not found: ", sheet, call. = FALSE)
+  }
+
+  data <- as.data.frame(data, stringsAsFactors = FALSE, check.names = FALSE)
+  sheet_data <- workbook$worksheets[[sheet_index]]$sheet_data
+  if (is.null(text_cells)) {
+    text_cells <- data.frame(
+      row = integer(), column = integer(), value = character()
+    )
+  } else {
+    text_cells <- as.data.frame(text_cells, stringsAsFactors = FALSE)
+    required_text_fields <- c("row", "column", "value")
+    if (!all(required_text_fields %in% names(text_cells))) {
+      stop(
+        "text_cells must contain row, column, and value fields.",
+        call. = FALSE
+      )
+    }
+    text_cells <- text_cells[!is.na(text_cells$value), required_text_fields]
+  }
+  populated_counts <- vapply(
+    data, function(values) sum(!is.na(values)), integer(1)
+  )
+  total_populated <- sum(populated_counts) + nrow(text_cells)
+  if (!total_populated) return(invisible(workbook))
+  cat(
+    "Preparing ", format(total_populated, big.mark = ",", scientific = FALSE),
+    " populated worksheet cells...\n", sep = ""
+  )
+  flush.console()
+
+  new_rows <- integer(total_populated)
+  new_columns <- integer(total_populated)
+  new_types <- integer(total_populated)
+  new_values <- character(total_populated)
+  offset <- 0L
+
+  character_columns <- which(!vapply(
+    data,
+    function(values) {
+      is.numeric(values) || is.integer(values) || is.logical(values)
+    },
+    logical(1)
+  ))
+  character_shared_strings <- setNames(
+    vector("list", length(character_columns)),
+    as.character(character_columns)
+  )
+  if (length(character_columns)) {
+    for (column_index in character_columns) {
+      values <- data[[column_index]]
+      values <- values[!is.na(values)]
+      if (!length(values)) next
+      strings <- openxlsx:::replaceIllegalCharacters(as.character(values))
+      character_shared_strings[[as.character(column_index)]] <- paste0(
+        "<si><t xml:space=\"preserve\">", strings, "</t></si>"
+      )
+    }
+  }
+  text_cell_shared_strings <- if (nrow(text_cells)) {
+    strings <- openxlsx:::replaceIllegalCharacters(
+      as.character(text_cells$value)
+    )
+    paste0("<si><t xml:space=\"preserve\">", strings, "</t></si>")
+  } else {
+    character()
+  }
+  unique_shared_strings <- unique(c(
+    unlist(character_shared_strings, use.names = FALSE),
+    text_cell_shared_strings
+  ))
+  if (length(unique_shared_strings)) {
+    # Updating once avoids repeatedly rebuilding and deduplicating the very
+    # large imported PD shared-string table for every text block.
+    workbook$updateSharedStrings(unique_shared_strings)
+    unique_shared_indices <-
+      match(unique_shared_strings, workbook$sharedStrings) - 1L
+    cat("Shared strings batched.\n")
+    flush.console()
+  }
+
+  for (column_index in seq_along(data)) {
+    values <- data[[column_index]]
+    populated <- which(!is.na(values))
+    if (!length(populated)) next
+
+    values <- values[populated]
+    target <- offset + seq_along(populated)
+    new_rows[target] <- populated
+    new_columns[target] <- start_column + column_index - 1L
+    if (is.numeric(values) || is.integer(values) || is.logical(values)) {
+      new_types[target] <- 0L
+      new_values[target] <- as.character(values)
+    } else {
+      new_types[target] <- 1L
+      shared_strings <-
+        character_shared_strings[[as.character(column_index)]]
+      new_values[target] <- unique_shared_indices[
+        match(shared_strings, unique_shared_strings)
+      ]
+    }
+    offset <- offset + length(populated)
+  }
+  if (nrow(text_cells)) {
+    target <- offset + seq_len(nrow(text_cells))
+    new_rows[target] <- as.integer(text_cells$row)
+    new_columns[target] <-
+      start_column + as.integer(text_cells$column) - 1L
+    new_types[target] <- 1L
+    new_values[target] <- unique_shared_indices[
+      match(text_cell_shared_strings, unique_shared_strings)
+    ]
+  }
+
+  # The imported worksheet and these temporary sparse vectors are both large.
+  # Release the source tables used to build the vectors before extending the
+  # worksheet fields, otherwise R can spend hours repeatedly collecting a
+  # nearly full heap while the reference-class active bindings are updated.
+  rm(
+    data, populated_counts, character_shared_strings,
+    text_cell_shared_strings, unique_shared_strings
+  )
+  if (exists("unique_shared_indices", inherits = FALSE)) {
+    rm(unique_shared_indices)
+  }
+  invisible(gc())
+
+  # Append all sparse cells together. Calling Sheet_Data$write once per column
+  # repeatedly copies the growing worksheet vectors and becomes quadratic for
+  # large experiments. Assigning the reference-class backing fields directly
+  # also avoids S4 replacement dispatch over each multi-million-element vector.
+  sheet_environment <- as.environment(sheet_data)
+  append_sheet_field <- function(field, values) {
+    backing_field <- paste0(".->", field)
+    current_values <- get(backing_field, envir = sheet_environment)
+    assign(
+      backing_field, c(current_values, values),
+      envir = sheet_environment
+    )
+    invisible(NULL)
+  }
+
+  append_sheet_field("rows", new_rows)
+  rm(new_rows)
+  invisible(gc())
+  cat("Sparse row coordinates appended.\n")
+  flush.console()
+  append_sheet_field("cols", new_columns)
+  rm(new_columns)
+  invisible(gc())
+  cat("Sparse column coordinates appended.\n")
+  flush.console()
+  append_sheet_field("t", new_types)
+  rm(new_types)
+  invisible(gc())
+  cat("Sparse cell types appended.\n")
+  flush.console()
+  append_sheet_field("v", new_values)
+  rm(new_values)
+  invisible(gc())
+  cat("Sparse cell values appended.\n")
+  flush.console()
+  append_sheet_field(
+    "f", rep.int(NA_character_, total_populated)
+  )
+  invisible(gc())
+  cat("Sparse formula placeholders appended.\n")
+  flush.console()
+  assign(
+    ".->n_elements",
+    as.integer(length(get(".->rows", envir = sheet_environment))),
+    envir = sheet_environment
+  )
+  assign(
+    ".->data_count",
+    get(".->data_count", envir = sheet_environment) + 1L,
+    envir = sheet_environment
+  )
+  invisible(NULL)
+}
+
+contiguous_column_ranges <- function(columns) {
+  columns <- sort(unique(as.integer(columns)))
+  if (!length(columns)) return(list())
+  split(columns, cumsum(c(TRUE, diff(columns) != 1L)))
+}
+
+add_expression_style <- function(
+  workbook, sheet, columns, rows, rule, style
+) {
+  if (!length(columns) || !length(rows)) return(invisible(workbook))
+  for (column_range in contiguous_column_ranges(columns)) {
+    conditionalFormatting(
+      workbook, sheet, cols = range(column_range), rows = range(rows),
+      rule = rule, style = style, type = "expression"
     )
   }
   invisible(workbook)
@@ -337,6 +568,7 @@ if (!file.exists(unnormalized_file)) {
     call. = FALSE
   )
 }
+saved_contrast_guide <- objects$contrast_guide
 
 clean_peptide <- function(x) {
   x <- sub("NA$", "", as.character(x))
@@ -374,6 +606,7 @@ source_analysis_description <- paste0(
   nrow(annotation), "-run MSstats analysis from ", basename(objects_file),
   "; conditions: ", paste(condition_order, collapse = ", "), "."
 )
+objects$annotation <- NULL
 
 settings <- objects$analysis_settings
 if (is.null(maximum_allowed_fold_change)) {
@@ -433,6 +666,9 @@ peptide_summary <- peptides[, .(
   NormalizedAbundance = sum(NormalizedIntensity, na.rm = TRUE)
 ), by = .(Protein, Peptide, Run)]
 peptide_summary[, Key := paste(Protein, Peptide, sep = "\r")]
+objects$msstats_input <- NULL
+rm(peptides)
+invisible(gc())
 
 make_wide_matrix <- function(dt, value_col, keys, runs) {
   wide <- dcast(dt, Key ~ Run, value.var = value_col)
@@ -482,8 +718,10 @@ calculated_matrix <- make_wide_matrix(
 normalized_peptide_matrix <- make_wide_matrix(
   peptide_summary, "NormalizedAbundance", peptide_keys, run_order
 )
+rm(peptide_summary)
 
 protein_level <- as.data.table(objects$protein_level_data)
+objects$protein_level_data <- NULL
 protein_column <- required_column(
   protein_level, c("Protein", "PROTEIN", "ProteinName"), "a protein identifier column"
 )
@@ -552,6 +790,8 @@ group_idx <- match(protein_accessions, group_wide$Protein)
 group_matrix <- as.matrix(group_wide[group_idx, ..group_order])
 
 comparisons <- as.data.table(objects$comparison_results)
+rm(objects)
+invisible(gc())
 comparison_order <- unique(as.character(comparisons$Label))
 if (!length(comparison_order)) {
   stop("No comparison labels were found in comparison_results.", call. = FALSE)
@@ -604,6 +844,13 @@ new_data[norm_cols] <- lapply(seq_along(norm_cols), function(j) {
 new_data[group_cols] <- lapply(seq_along(group_cols), function(j) {
   x <- rep(NA_real_, n_rows); x[protein_rows] <- group_matrix[, j]; x
 })
+rm(
+  calculated_matrix, normalized_peptide_matrix, protein_sample_matrix,
+  unnormalized_protein_matrix, group_matrix, protein_wide,
+  unnormalized_wide, group_wide, group_summary, protein_level,
+  unnormalized_protein_level
+)
+invisible(gc())
 
 comparisons[, Ratio := 2^log2FC]
 display_comparisons <- copy(comparisons)
@@ -693,10 +940,33 @@ normalize_header <- function(value) {
 peptide_tail_names <- c(
   "Positions in Proteins", "Quan Usage", "Quan Ratio Usage"
 )
-peptide_tail_columns <- source_columns[
+named_peptide_tail_columns <- source_columns[
   normalize_header(source_peptide_header_values[source_columns]) %in%
     normalize_header(peptide_tail_names)
 ]
+trailing_source_columns <- tail(source_columns, 3L)
+trailing_top_headers <- original_header_values[trailing_source_columns]
+trailing_peptide_headers <- source_peptide_header_values[
+  trailing_source_columns
+]
+trailing_columns_are_peptide_only <-
+  length(trailing_source_columns) == 3L &&
+  all(is.na(trailing_top_headers) | !nzchar(trimws(trailing_top_headers))) &&
+  all(
+    !is.na(trailing_peptide_headers) &
+      nzchar(trimws(trailing_peptide_headers))
+  )
+peptide_tail_columns <- if (trailing_columns_are_peptide_only) {
+  trailing_source_columns
+} else {
+  tail(named_peptide_tail_columns, 3L)
+}
+if (length(peptide_tail_columns) != 3L) {
+  stop(
+    "Could not identify the three trailing peptide-only worksheet columns.",
+    call. = FALSE
+  )
+}
 core_source_columns <- setdiff(source_columns, peptide_tail_columns)
 core_header_values <- original_header_values[core_source_columns]
 peptide_tail_top_headers <- original_header_values[peptide_tail_columns]
@@ -704,7 +974,35 @@ peptide_tail_headers <- source_peptide_header_values[peptide_tail_columns]
 core_original_table <- existing_table[, core_source_columns, drop = FALSE]
 peptide_tail_table <- existing_table[, peptide_tail_columns, drop = FALSE]
 source_header_values <- c(core_header_values, peptide_tail_top_headers)
-source_original_table <- cbind(core_original_table, peptide_tail_table)
+
+# The complete source table is needed only for the hierarchical worksheet.
+# Retain compact protein-only subsets now, then release the much larger table
+# before constructing and appending the sparse MSstats worksheet vectors.
+protein_source_original_table <- cbind(
+  core_original_table[protein_display_rows, , drop = FALSE],
+  peptide_tail_table[protein_display_rows, , drop = FALSE]
+)
+protein_msstats_data <- new_data[protein_display_rows, , drop = FALSE]
+protein_sort_order <- protein_worksheet_order(
+  source_header_values,
+  protein_source_original_table,
+  protein_msstats_data
+)
+protein_display_rows <- protein_display_rows[protein_sort_order]
+protein_core_data <- core_original_table[
+  protein_display_rows, , drop = FALSE
+]
+protein_msstats_data <- protein_msstats_data[
+  protein_sort_order, , drop = FALSE
+]
+protein_peptide_tail_data <- peptide_tail_table[
+  protein_display_rows, , drop = FALSE
+]
+rm(
+  existing_table, core_original_table, protein_source_original_table,
+  protein_sort_order
+)
+invisible(gc())
 
 # Keep peptide-only hierarchy fields at the far right. This prevents their
 # corresponding empty protein cells from separating source metadata from the
@@ -713,31 +1011,43 @@ start_col <- length(core_source_columns) + 1L
 last_msstats_col <- start_col + n_new_cols - 1L
 peptide_tail_start_col <- last_msstats_col + 1L
 final_last_col <- last_msstats_col + length(peptide_tail_columns)
-rewrite_last_col <- max(source_last_col, final_last_col)
-deleteData(
-  wb, main_sheet,
-  cols = seq.int(start_col, rewrite_last_col),
-  rows = seq_len(n_rows + 1L),
-  gridExpand = TRUE
+cat(
+  "Writing ", n_new_cols, " appended columns to ", n_rows,
+  " worksheet rows using sparse cells...\n", sep = ""
 )
-writeData(
-  wb, main_sheet, new_data[-1, , drop = FALSE], startCol = start_col,
-  startRow = 2, colNames = FALSE, rowNames = FALSE, keepNA = FALSE
+flush.console()
+# Delete only cells that actually exist in the replaceable tail. Expanding a
+# rectangular deletion over a large PD hierarchy can otherwise allocate tens
+# of millions of temporary row/column pairs before any new values are written.
+clear_worksheet_columns(wb, main_sheet, start_col)
+msstats_header_cells <- rbind(
+  data.frame(
+    row = 1L, column = seq_len(n_new_cols), value = protein_headers,
+    stringsAsFactors = FALSE
+  ),
+  data.frame(
+    row = 3L, column = seq_len(n_new_cols), value = peptide_headers,
+    stringsAsFactors = FALSE
+  )
 )
-writeData(wb, main_sheet, t(protein_headers), startCol = start_col, startRow = 1, colNames = FALSE)
-writeData(wb, main_sheet, t(peptide_headers), startCol = start_col, startRow = 3, colNames = FALSE)
-if (length(peptide_tail_columns)) {
-  writeData(
-    wb, main_sheet, peptide_tail_table,
-    startCol = peptide_tail_start_col, startRow = 1,
-    colNames = FALSE, rowNames = FALSE, keepNA = FALSE
+if (nrow(main_nonfinite_labels)) {
+  msstats_header_cells <- rbind(
+    msstats_header_cells,
+    data.frame(
+      row = main_nonfinite_labels$row,
+      column = main_nonfinite_labels$col,
+      value = main_nonfinite_labels$value,
+      stringsAsFactors = FALSE
+    )
   )
 }
-if (nrow(main_nonfinite_labels)) {
-  main_excel_labels <- main_nonfinite_labels
-  main_excel_labels$col <- start_col + main_excel_labels$col - 1L
-  write_excel_labels(wb, main_sheet, main_excel_labels)
-}
+write_sparse_columns(
+  wb, main_sheet, cbind(new_data, peptide_tail_table), start_col,
+  text_cells = msstats_header_cells
+)
+rm(new_data, peptide_tail_table)
+cat("Main worksheet values written.\n")
+flush.console()
 
 # Match the hierarchical Proteome Discoverer layout used by the reference
 # workbook. The rules are based on row roles and dynamic output blocks, rather
@@ -750,30 +1060,24 @@ column_header_style <- do.call(createStyle, c(base_font, list(
   fgFill = "#A7CDF0", border = grid_borders,
   borderColour = grid_colour, borderStyle = "thin", wrapText = TRUE
 )))
-protein_row_style <- do.call(createStyle, c(base_font, list(
-  fgFill = "#DDEBF7", border = grid_borders,
+# Conditional styles cover large row ranges without materializing a separate
+# style coordinate for every cell. This keeps six-figure peptide worksheets
+# practical while preserving the same hierarchy colours, borders, and number
+# formats in Excel.
+protein_row_cf_style <- do.call(createStyle, c(base_font, list(
+  bgFill = "#DDEBF7", border = grid_borders,
   borderColour = grid_colour, borderStyle = "thin", wrapText = TRUE
 )))
-protein_number_style <- do.call(createStyle, c(base_font, list(
-  numFmt = "0.00", fgFill = "#DDEBF7", border = grid_borders,
+peptide_header_cf_style <- do.call(createStyle, c(base_font, list(
+  bgFill = "#F0CBA8", border = grid_borders,
   borderColour = grid_colour, borderStyle = "thin", wrapText = TRUE
 )))
-protein_scientific_style <- do.call(createStyle, c(base_font, list(
-  numFmt = "0.00E+00", fgFill = "#DDEBF7", border = grid_borders,
+peptide_row_cf_style <- do.call(createStyle, c(base_font, list(
+  bgFill = "#FCE4D6", border = grid_borders,
   borderColour = grid_colour, borderStyle = "thin", wrapText = TRUE
 )))
-peptide_header_style <- do.call(createStyle, c(base_font, list(
-  fgFill = "#F0CBA8", border = grid_borders,
-  borderColour = grid_colour, borderStyle = "thin", wrapText = TRUE
-)))
-peptide_row_style <- do.call(createStyle, c(base_font, list(
-  fgFill = "#FCE4D6", border = grid_borders,
-  borderColour = grid_colour, borderStyle = "thin", wrapText = TRUE
-)))
-peptide_number_style <- do.call(createStyle, c(base_font, list(
-  numFmt = "0.00E+00", fgFill = "#FCE4D6", border = grid_borders,
-  borderColour = grid_colour, borderStyle = "thin", wrapText = TRUE
-)))
+regular_number_cf_style <- createStyle(numFmt = "0.00")
+scientific_number_cf_style <- createStyle(numFmt = "0.00E+00")
 
 peptide_abundance_cols <- start_col + seq_len(2L * length(run_order)) - 1L
 
@@ -853,14 +1157,39 @@ if (length(long_description_rows)) {
 # This includes collapsed peptide rows, so expanding a protein group does not
 # reveal a differently coloured section at the MSstats join.
 addStyle(wb, main_sheet, column_header_style, rows = 1, cols = 1:final_last_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, protein_row_style, rows = protein_display_rows, cols = 1:final_last_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, protein_number_style, rows = protein_display_rows, cols = start_col:last_msstats_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, protein_scientific_style, rows = protein_display_rows, cols = scientific_protein_cols, gridExpand = TRUE, stack = FALSE)
+main_data_rows <- seq.int(2L, n_rows)
+protein_row_rule <- 'OR($A2="Master Protein",$A2="Master Protein Candidate")'
+peptide_header_rule <- 'AND($A2="",$B2="Confidence")'
+peptide_row_rule <- 'AND($A2="",$B2<>"Confidence",$D2<>"")'
+add_expression_style(
+  wb, main_sheet, seq_len(final_last_col), main_data_rows,
+  protein_row_rule, protein_row_cf_style
+)
+add_expression_style(
+  wb, main_sheet, seq_len(final_last_col), main_data_rows,
+  peptide_header_rule, peptide_header_cf_style
+)
 # Keep each collapsed peptide section visually continuous through the final
 # column, including protein-only fields where peptide rows contain no value.
-addStyle(wb, main_sheet, peptide_header_style, rows = peptide_header_rows, cols = 1:final_last_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, peptide_row_style, rows = peptide_rows, cols = 1:final_last_col, gridExpand = TRUE, stack = FALSE)
-addStyle(wb, main_sheet, peptide_number_style, rows = peptide_rows, cols = scientific_peptide_cols, gridExpand = TRUE, stack = FALSE)
+add_expression_style(
+  wb, main_sheet, seq_len(final_last_col), main_data_rows,
+  peptide_row_rule, peptide_row_cf_style
+)
+add_expression_style(
+  wb, main_sheet,
+  setdiff(start_col:last_msstats_col, scientific_protein_cols),
+  main_data_rows, protein_row_rule, regular_number_cf_style
+)
+add_expression_style(
+  wb, main_sheet, scientific_protein_cols, main_data_rows,
+  protein_row_rule, scientific_number_cf_style
+)
+add_expression_style(
+  wb, main_sheet, scientific_peptide_cols, main_data_rows,
+  peptide_row_rule, scientific_number_cf_style
+)
+cat("Main worksheet formatting written.\n")
+flush.console()
 
 description <- as.character(meta[[4]][protein_rows])
 gene_symbol <- sub(".* GN=([^ ]+).*", "\\1", description)
@@ -908,7 +1237,7 @@ replace_sheet <- function(sheet_name, data) {
   }
 }
 
-contrast_guide <- objects$contrast_guide
+contrast_guide <- saved_contrast_guide
 contrast_guide_path <- file.path(results_dir, "msstats_contrast_guide.csv")
 if (is.null(contrast_guide) && file.exists(contrast_guide_path)) {
   contrast_guide <- data.table::fread(contrast_guide_path, data.table = FALSE)
@@ -1022,9 +1351,9 @@ guide <- data.frame(
     paste0(
       "Hierarchical Proteome Discoverer view containing protein rows, protein ",
       "candidate rows, peptide headers, and peptide rows. Peptide sections retain ",
-      "their source grouping and collapsed-row behavior. Positions in Proteins, ",
-      "Quan Usage, and Quan Ratio Usage are kept together at the far right because ",
-      "they apply only to peptide rows."
+      "their source grouping and collapsed-row behavior. The trailing peptide-only ",
+      "fields (", paste(peptide_tail_headers, collapse = ", "),
+      ") are kept together at the far right because they apply only to peptide rows."
     ),
     "Sum of positive PDtoMSstatsFormat feature intensities for a protein-peptide-run across precursor charge states; linear scale.",
     paste0(
@@ -1102,17 +1431,6 @@ protein_sheet <- "Proteins"
 if (protein_sheet %in% names(wb)) removeWorksheet(wb, protein_sheet)
 addWorksheet(wb, protein_sheet)
 
-protein_sort_order <- protein_worksheet_order(
-  source_header_values,
-  source_original_table[protein_display_rows, , drop = FALSE],
-  new_data[protein_display_rows, , drop = FALSE]
-)
-protein_display_rows <- protein_display_rows[protein_sort_order]
-protein_core_data <- core_original_table[protein_display_rows, , drop = FALSE]
-protein_msstats_data <- new_data[protein_display_rows, , drop = FALSE]
-protein_peptide_tail_data <- peptide_tail_table[
-  protein_display_rows, , drop = FALSE
-]
 protein_only_headers <- c(
   core_header_values,
   protein_headers,
@@ -1150,7 +1468,17 @@ if (nrow(main_nonfinite_labels)) {
   protein_nonfinite_labels <- protein_nonfinite_labels[
     !is.na(protein_nonfinite_labels$row), , drop = FALSE
   ]
-  write_excel_labels(wb, protein_sheet, protein_nonfinite_labels)
+  if (nrow(protein_nonfinite_labels)) {
+    write_sparse_columns(
+      wb, protein_sheet, data.frame(), 1L,
+      text_cells = data.frame(
+        row = protein_nonfinite_labels$row,
+        column = protein_nonfinite_labels$col,
+        value = protein_nonfinite_labels$value,
+        stringsAsFactors = FALSE
+      )
+    )
+  }
 }
 
 addFilter(wb, protein_sheet, rows = 1L, cols = seq_len(final_last_col))
@@ -1187,20 +1515,18 @@ addStyle(
   rows = 1L, cols = seq_len(final_last_col),
   gridExpand = TRUE, stack = FALSE
 )
-addStyle(
-  wb, protein_sheet, protein_row_style,
-  rows = protein_only_rows, cols = seq_len(final_last_col),
-  gridExpand = TRUE, stack = FALSE
+add_expression_style(
+  wb, protein_sheet, seq_len(final_last_col), protein_only_rows,
+  "TRUE", protein_row_cf_style
 )
-addStyle(
-  wb, protein_sheet, protein_number_style,
-  rows = protein_only_rows, cols = start_col:last_msstats_col,
-  gridExpand = TRUE, stack = FALSE
+add_expression_style(
+  wb, protein_sheet,
+  setdiff(start_col:last_msstats_col, scientific_protein_cols),
+  protein_only_rows, "TRUE", regular_number_cf_style
 )
-addStyle(
-  wb, protein_sheet, protein_scientific_style,
-  rows = protein_only_rows, cols = scientific_protein_cols,
-  gridExpand = TRUE, stack = FALSE
+add_expression_style(
+  wb, protein_sheet, scientific_protein_cols, protein_only_rows,
+  "TRUE", scientific_number_cf_style
 )
 
 add_protein_log2fc_gradient(
@@ -1304,12 +1630,14 @@ for (sheet_index in seq_along(wb$worksheets)) {
   }
 }
 
-# loadWorkbook() resets imported worksheet dimensions to A1. Recalculate every
-# nonempty sheet after all writes and reordering so Excel recognizes the full
-# used range of generated DE, GSEA, guide, result, and protein worksheets.
-repair_worksheet_dimensions(wb)
+# loadWorkbook() resets imported worksheet dimensions to A1. Recalculate each
+# generated sheet after all writes and reordering. The hierarchical main sheet
+# was assigned its exact dimension above, so avoid rescanning its many cells.
+repair_worksheet_dimensions(wb, exclude_sheets = main_sheet)
 
 dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
+cat("Saving Excel workbook...\n")
+flush.console()
 saveWorkbook(wb, output_file, overwrite = TRUE)
 cat("Saved:", normalizePath(output_file, winslash = "/", mustWork = TRUE), "\n")
 cat("Protein rows:", length(protein_rows), "\n")
