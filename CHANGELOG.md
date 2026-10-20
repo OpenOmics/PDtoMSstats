@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.2.1 - 2026-10-20
+
+- Added workbook-derived `GN=` gene symbols to a dedicated card in the
+  interactive time-course trajectory dashboard.
+- Passed the protein workbook through resolved time-course configuration and
+  provenance so gene annotations are reproducible in local and Slurm runs.
+- Added support for resolving semicolon-delimited protein accession groups to
+  slash-delimited gene symbols without changing statistical model results.
+
 ## 0.2.0 - 2026-10-20
 
 - Added standardized `init`, `validate`, `run`, `submit`, `status`, and

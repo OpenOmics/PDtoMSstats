@@ -1,4 +1,5 @@
 analysis_file: "results/example/msstats_workbook_export_objects.rds"
+protein_workbook: null
 
 request: "deidentified-example-timecourse"
 report_label: "De-identified PDtoMSstats time-course demonstration"

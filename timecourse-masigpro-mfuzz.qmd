@@ -29,6 +29,7 @@ params:
   request: "timecourse-analysis"
   report_label: "Time-course proteomics project"
   analysis_file: null
+  protein_workbook: null
   output_dir: "results/timecourse-analysis"
   figures_dir: "figures/timecourse-analysis"
   time_column: "Time"
@@ -74,6 +75,7 @@ required_packages <- c(
   "knitr",
   "limma",
   "maSigPro",
+  "readxl",
   "readr",
   "scales",
   "tibble",
@@ -136,6 +138,17 @@ analysis_file <- normalizePath(
   winslash = "/",
   mustWork = TRUE
 )
+protein_workbook <- NULL
+if (!is.null(params$protein_workbook) &&
+    length(params$protein_workbook) == 1L &&
+    !is.na(params$protein_workbook) &&
+    nzchar(params$protein_workbook)) {
+  protein_workbook <- normalizePath(
+    resolve_path(params$protein_workbook),
+    winslash = "/",
+    mustWork = TRUE
+  )
+}
 output_dir <- resolve_path(params$output_dir)
 figure_dir <- resolve_path(params$figures_dir)
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -153,6 +166,11 @@ knitr::opts_chunk$set(
 )
 
 set.seed(as.integer(params$random_seed))
+
+source(
+  file.path(report_dir, "R", "input-functions.R"),
+  local = knitr::knit_global()
+)
 
 write_result <- function(data, filename) {
   path <- file.path(output_dir, filename)
@@ -194,6 +212,10 @@ describe_timecourse_column <- function(column) {
     Protein = c(
       "Protein identifier inherited from the MSstats protein-level data.",
       "Use this key to join model, clustering, and source-result tables."
+    ),
+    GeneSymbol = c(
+      "Gene symbol parsed from the GN= field in the Proteome Discoverer protein description.",
+      "A slash separates symbols when the MSstats identifier contains multiple protein accessions; NA means no GN= annotation was available."
     ),
     Variable = c(
       "maSigPro model term retained by backward selection.",
@@ -877,6 +899,18 @@ protein_data <- protein_source |>
     Log2Abundance = suppressWarnings(as.numeric(.data$LogIntensities))
   ) |>
   inner_join(annotation, by = "Run")
+
+protein_gene_annotation <- tibble(
+  Protein = unique(protein_data$Protein),
+  GeneSymbol = NA_character_
+)
+if (!is.null(protein_workbook)) {
+  source_protein_annotation <- read_pd_protein_annotation(protein_workbook)
+  protein_gene_annotation$GeneSymbol <- match_pd_gene_symbols(
+    protein_gene_annotation$Protein,
+    source_protein_annotation
+  )
+}
 
 duplicate_protein_runs <- protein_data |>
   count(.data$Protein, .data$Run, name = "Rows") |>
@@ -2439,8 +2473,10 @@ trajectory_explorer_means <- trajectory_explorer_points |>
   )
 
 trajectory_explorer_metadata <- combined_interpretation_results |>
+  left_join(protein_gene_annotation, by = "Protein") |>
   transmute(
     Protein = as.character(.data$Protein),
+    GeneSymbol = as.character(.data$GeneSymbol),
     SignificanceCategory = as.character(.data$SignificanceCategory),
     maSigPro_AdjPValue = format_report_p(.data$maSigPro_AdjPValue),
     maSigPro_RSquared = format_report_number(.data$maSigPro_RSquared),
@@ -2528,6 +2564,7 @@ trajectory_explorer_json <- gsub(
   min-height: 8.5rem;
 }
 .trajectory-card--category { border-top-color: #8172B2; }
+.trajectory-card--gene { border-top-color: #DD8452; }
 .trajectory-card--limma { border-top-color: #C44E52; }
 .trajectory-card--effect { border-top-color: #55A868; }
 .trajectory-card-label {
@@ -2745,6 +2782,11 @@ cat(
           <div class="trajectory-card-label">Selected protein</div>
           <div class="trajectory-card-value">${escapeHtml(result.Protein)}</div>
           <div class="trajectory-card-detail"><span class="trajectory-badge">${escapeHtml(result.SignificanceCategory)}</span></div>
+        </div>
+        <div class="trajectory-card trajectory-card--gene">
+          <div class="trajectory-card-label">Gene symbol (GN)</div>
+          <div class="trajectory-card-value">${escapeHtml(displayValue(result.GeneSymbol))}</div>
+          <div class="trajectory-card-detail">Parsed from the protein description in the input Proteome Discoverer workbook.</div>
         </div>
         <div class="trajectory-card">
           <div class="trajectory-card-label">Orthogonal maSigPro</div>

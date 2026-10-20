@@ -10,6 +10,7 @@ configuration automatically:
 ./pdtomsstats run \
   --config config/local-project.yml \
   --outputs html,timecourse \
+  --protein-workbook data/my-project/proteins.xlsx \
   --time-column TimePoint \
   --group-column Infection \
   --reference-group Control \
@@ -42,7 +43,15 @@ time_column: "Time"
 group_column: "Group"
 reference_group: "Reference"
 comparison_group: "Treatment"
+protein_workbook: "data/my-project/proteins.xlsx"
 ```
+
+`protein_workbook` is optional for the statistical models. When supplied in
+the YAML or with `--protein-workbook`, the trajectory dashboard parses the
+`GN=` field from each Proteome Discoverer protein description and displays the
+gene symbol in a dedicated result card. Semicolon-separated protein groups
+show their unique symbols separated by `/`; proteins without a `GN=` value
+show `NA`.
 
 `time_unit` rescales time before trajectory fitting. Affine time rescaling does
 not change the fitted orthogonal-polynomial or natural-spline model space.
@@ -89,8 +98,9 @@ not change the fitted orthogonal-polynomial or natural-spline model space.
   clusters and memberships, and an early-to-late observed-effect summary; the
   complete coefficient-level results remain in the CSV files. An embedded
   client-side dashboard near the end of the report can search and select any
-  significant protein, summarize its two-model and Mfuzz results in cards, and
-  plot its raw biological replicates, group means, and standard errors. It uses
+  significant protein, show its workbook-derived gene symbol, summarize its
+  two-model and Mfuzz results in cards, and plot its raw biological replicates,
+  group means, and standard errors. It uses
   ordinary in-document JavaScript and SVG so it works when the standalone HTML
   is opened directly from disk without a server.
 

@@ -1,5 +1,9 @@
 # Input created by the main MSstats report.
 analysis_file: "results/example-project/msstats_workbook_export_objects.rds"
+# Optional Proteome Discoverer workbook used to show GN= gene symbols in the
+# interactive trajectory dashboard. The one-command runner fills this from
+# --protein-workbook when supplied.
+protein_workbook: null
 
 request: "example-project-timecourse"
 report_label: "Example project time-course analysis"

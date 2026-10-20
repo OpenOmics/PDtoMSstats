@@ -202,6 +202,7 @@ pdt_main_defaults <- function() {
 pdt_timecourse_defaults <- function() {
   list(
     analysis_file = NULL,
+    protein_workbook = NULL,
     request = NULL,
     report_label = NULL,
     output_dir = NULL,
@@ -728,6 +729,7 @@ pdt_prepare_main_config <- function(options, provided, project_root,
 
 pdt_apply_cli_to_timecourse <- function(config, options, provided) {
   mapping <- c(
+    protein_workbook = "protein_workbook",
     time_column = "time_column",
     group_column = "group_column",
     reference_group = "reference_group",
@@ -780,6 +782,11 @@ pdt_prepare_timecourse_config <- function(main_config, annotation, options,
   }
   config$output_dir <- pdt_resolve_path(config$output_dir, project_root, FALSE)
   config$figures_dir <- pdt_resolve_path(config$figures_dir, project_root, FALSE)
+  if (pdt_is_set(config$protein_workbook)) {
+    config$protein_workbook <- pdt_resolve_path(
+      config$protein_workbook, project_root, TRUE
+    )
+  }
 
   columns <- names(annotation)
   if (!pdt_is_set(config$time_column)) {

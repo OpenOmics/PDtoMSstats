@@ -93,8 +93,12 @@ The launcher accepts one output or any comma-separated combination:
 "$PDT" run --project "$PROJECT" \
   --config "$PROJECT/config/my-project-main.yml" \
   --timecourse-config "$PROJECT/config/my-project-timecourse.yml" \
+  --protein-workbook "$PROJECT/data/proteins.xlsx" \
   --outputs timecourse
 ```
+
+The protein workbook is optional for model fitting, but supplying it adds the
+description-derived `GN=` gene symbol to the interactive trajectory dashboard.
 
 With the Biowulf profile, each plain `run` command submits a detached Slurm job
 and returns after `sbatch` accepts it. Use `--mode slurm` to request this
@@ -137,7 +141,7 @@ and default Slurm resources. Experiment design remains in the project YAML.
 The supplied `biowulf.yml` profile uses:
 
 - Apptainer 1.4.5;
-- `/data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.0.sif`;
+- `/data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.1.sif`;
 - detached Slurm execution as the default `run` mode;
 - `--containall` and `--cleanenv`;
 - explicit workflow, project, and job-temporary binds;

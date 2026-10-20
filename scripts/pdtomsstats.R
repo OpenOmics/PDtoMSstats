@@ -32,7 +32,7 @@ Common options:
   --condition-columns A,B            Annotation columns that define Condition
   --condition-template TEXT          Example: {TimePoint}h_{Infection}
   --contrast-file FILE               Long-format contrast CSV/TSV/TXT
-  --protein-workbook FILE            Required for the formatted Excel workbook
+  --protein-workbook FILE            Excel source; also supplies time-course GN= symbols
   --no-gsea                          Skip human GO enrichment
   --remove-few-measurements          Enable MSstats sparse-feature filtering
   --cores N                          MSstats processing cores
@@ -177,6 +177,10 @@ if ("timecourse" %in% outputs) {
     project_root,
     interactive_allowed = interactive_allowed
   )
+  if (!pdt_is_set(protein_workbook) &&
+      pdt_is_set(timecourse_config$protein_workbook)) {
+    protein_workbook <- timecourse_config$protein_workbook
+  }
 }
 
 dir.create(main_config$output_dir, recursive = TRUE, showWarnings = FALSE)

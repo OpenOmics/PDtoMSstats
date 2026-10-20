@@ -31,8 +31,8 @@ apptainer --version
 
 mkdir -p /data/Proteomics_IDSS/SIFs
 apptainer pull \
-  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.0.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.2.0
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.1.sif \
+  docker://ghcr.io/openomics/pdtomsstats:0.2.1
 ```
 
 Verify the installed image:
@@ -41,7 +41,7 @@ Verify the installed image:
 apptainer exec --containall --cleanenv \
   --bind /data/Proteomics_IDSS/prod/PDtoMSstats:/opt/PDtoMSstats:ro \
   --pwd /opt/PDtoMSstats \
-  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.0.sif \
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.1.sif \
   Rscript scripts/check_environment.R
 ```
 
@@ -157,8 +157,12 @@ Time-course report after the main report exists:
 "$PDT" run --project "$PROJECT" \
   --config "$PROJECT/config/my-project-main.yml" \
   --timecourse-config "$PROJECT/config/my-project-timecourse.yml" \
+  --protein-workbook "$PROJECT/data/proteins.xlsx" \
   --outputs timecourse
 ```
+
+The protein workbook is optional for model fitting. Supplying it adds the
+description-derived `GN=` gene symbol to the interactive trajectory dashboard.
 
 The Excel and time-course stages reuse
 `results/msstats_workbook_export_objects.rds`. If it does not exist, the

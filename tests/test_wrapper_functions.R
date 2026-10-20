@@ -132,12 +132,15 @@ on.exit(unlink(test_dir, recursive = TRUE, force = TRUE), add = TRUE)
 
 psm_file <- file.path(test_dir, "psm.csv")
 annotation_file <- file.path(test_dir, "annotation.csv")
+protein_workbook <- file.path(test_dir, "proteins.xlsx")
 data.table::fwrite(alternative_psm, psm_file)
 data.table::fwrite(alternative_annotation, annotation_file)
+stopifnot(file.create(protein_workbook))
 
 options <- list(
   psm = psm_file,
   annotation = annotation_file,
+  protein_workbook = protein_workbook,
   outputs = "html,timecourse",
   request = "wrapper-test",
   output_dir = file.path(test_dir, "results"),
@@ -189,6 +192,10 @@ stopifnot(
   identical(timecourse$group_column, "Infection"),
   identical(timecourse$reference_group, "Control"),
   identical(timecourse$comparison_group, "Treatment"),
+  identical(
+    timecourse$protein_workbook,
+    normalizePath(protein_workbook, winslash = "/", mustWork = TRUE)
+  ),
   identical(timecourse$polynomial_degree, 3L),
   identical(timecourse$spline_df, 3L),
   identical(timecourse$model_fdr, 0.05),

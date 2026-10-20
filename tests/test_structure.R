@@ -148,6 +148,8 @@ required_timecourse_text <- c(
   "trajectory-explorer-data",
   "trajectory-dashboard-script",
   "trajectory-protein-search",
+  "Gene symbol (GN)",
+  "match_pd_gene_symbols",
   "renderChart",
   "trajectory-card-grid"
 )

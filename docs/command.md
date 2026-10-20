@@ -179,6 +179,7 @@ column, reference group, and comparison group:
   --condition-columns TimePoint,Infection \
   --condition-template '{TimePoint}h_{Infection}' \
   --outputs html,timecourse \
+  --protein-workbook data/my-project/proteins.xlsx \
   --time-column TimePoint \
   --group-column Infection \
   --reference-group Control \
@@ -189,6 +190,10 @@ The time-course report fits orthogonal-polynomial maSigPro and limma natural
 splines, then runs Mfuzz independently on each method's significant proteins.
 It is for independent samples and stops if biological replicate identifiers
 repeat across time points.
+
+When `--protein-workbook` is supplied, the interactive trajectory dashboard
+also shows the gene symbol parsed from each protein description's `GN=` field.
+This annotation does not enter any statistical model.
 
 The default selection thresholds can be overridden from the command line. For
 example, add `--model-fdr 0.05 --limma-interaction-fdr 0.05
