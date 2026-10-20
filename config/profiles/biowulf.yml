@@ -1,9 +1,14 @@
 # OpenOmics/Proteomics_IDSS execution profile for NIH Biowulf.
 runtime: "apptainer"
 module: "apptainer/1.4.5"
-image: "/data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.1.sif"
+image: "/data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.2.sif"
 group: "Proteomics_IDSS"
 default_mode: "slurm"
+
+# Preserve the stable collaborative path inside the container even when the
+# host resolves it through /vf/users. The launcher also binds the physical
+# path, so either spelling remains valid in commands and YAML files.
+path_alias_root: "/data/Proteomics_IDSS"
 
 # Isolate the host home and environment. The launcher explicitly binds only
 # the workflow, project, and job temporary directory.

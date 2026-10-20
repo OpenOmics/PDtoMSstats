@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.2 - 2026-10-20
+
+- Preserved logical filesystem paths in the standardized launcher and added
+  profile-driven alias binds so Biowulf projects work through either
+  `/data/Proteomics_IDSS` or `/vf/users/Proteomics_IDSS` without user-created
+  symlinks or environment variables.
+
 ## 0.2.1 - 2026-10-20
 
 - Added workbook-derived `GN=` gene symbols to a dedicated card in the

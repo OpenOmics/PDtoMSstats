@@ -141,7 +141,9 @@ and default Slurm resources. Experiment design remains in the project YAML.
 The supplied `biowulf.yml` profile uses:
 
 - Apptainer 1.4.5;
-- `/data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.1.sif`;
+- `/data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.2.sif`;
+- a stable `/data/Proteomics_IDSS` path alias while also exposing the resolved
+  `/vf/users/Proteomics_IDSS` project path;
 - detached Slurm execution as the default `run` mode;
 - `--containall` and `--cleanenv`;
 - explicit workflow, project, and job-temporary binds;

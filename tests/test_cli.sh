@@ -7,7 +7,7 @@ trap 'rm -rf "$test_root"' EXIT
 
 bash -n "$repo_root/pdtomsstats"
 version_output=$("$repo_root/pdtomsstats" version)
-grep -q '^PDtoMSstats: 0.2.1$' <<< "$version_output"
+grep -q '^PDtoMSstats: 0.2.2$' <<< "$version_output"
 
 project="$test_root/group-project"
 "$repo_root/pdtomsstats" init \
@@ -15,7 +15,7 @@ project="$test_root/group-project"
   --modules main,timecourse \
   --request group-project \
   --label "Group project"
-project=$(cd "$project" && pwd -P)
+project=$(cd "$project" && pwd -L)
 
 for directory in config data logs results tmp .pdtomsstats; do
   test -d "$project/$directory"
@@ -94,7 +94,7 @@ grep -q '^--containall$' "$runtime_args"
 grep -q '^--cleanenv$' "$runtime_args"
 grep -Fq "$repo_root:/opt/PDtoMSstats:ro" "$runtime_args"
 grep -Fq "$project:$project" "$runtime_args"
-grep -q '^PDTOMSSTATS_WORKFLOW_VERSION=0.2.1$' "$runtime_args"
+grep -q '^PDTOMSSTATS_WORKFLOW_VERSION=0.2.2$' "$runtime_args"
 grep -Fq "PDTOMSSTATS_CONTAINER_IMAGE=$fake_image" "$runtime_args"
 grep -Fq "PDTOMSSTATS_EXECUTION_PROFILE=$fake_profile" "$runtime_args"
 grep -q '^PDTOMSSTATS_EXECUTION_MODE=local$' "$runtime_args"
@@ -127,5 +127,37 @@ grep -Fq -- '--outputs html' "$job_script"
 PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run --mode slurm \
   --project "$project" --profile "$fake_profile" \
   --config "$project/config/group-project-main.yml" --outputs html >/dev/null
+
+# A logical data path and its resolved physical path must both be available
+# inside Apptainer. This models the Biowulf /data -> /vf/users mapping without
+# creating any symlink in the user's project or home directory.
+alias_physical_root="$test_root/vf-users/Proteomics_IDSS"
+alias_logical_root="$test_root/data/Proteomics_IDSS"
+mkdir -p "$alias_physical_root" "$(dirname "$alias_logical_root")"
+ln -s "$alias_physical_root" "$alias_logical_root"
+alias_logical_root=$(cd "$alias_logical_root" && pwd -L)
+alias_project="$alias_logical_root/alias-project"
+"$repo_root/pdtomsstats" init \
+  --project "$alias_project" --modules main --request alias-project >/dev/null
+grep -Fq "output_dir: \"$alias_project/results\"" \
+  "$alias_project/config/alias-project-main.yml"
+
+alias_project_physical=$(cd "$alias_project" && pwd -P)
+alias_profile="$test_root/alias-profile.yml"
+{
+  printf 'runtime: "%s"\n' "$fake_runtime"
+  printf 'module: null\n'
+  printf 'image: "%s"\n' "$fake_image"
+  printf 'group: null\ndefault_mode: local\ncontainall: true\ncleanenv: true\n'
+  printf 'path_alias_root: "%s"\n' "$alias_logical_root"
+} > "$alias_profile"
+
+"$repo_root/pdtomsstats" run \
+  --project "$alias_project_physical" --profile "$alias_profile" \
+  --mode local --job-tmp "$alias_project_physical/tmp" \
+  --config "$alias_project/config/alias-project-main.yml" --outputs html
+grep -Fq "$alias_project_physical:$alias_project_physical" "$runtime_args"
+grep -Fq "$alias_project_physical:$alias_project" "$runtime_args"
+grep -Fq "$alias_project/config/alias-project-main.yml" "$runtime_args"
 
 echo "Standardized command launcher: PASS"

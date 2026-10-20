@@ -110,7 +110,7 @@ After copying data and editing the generated YAML files:
 
 The Biowulf profile makes plain `run` submit a detached Slurm job. Add
 `--mode local` to run inside the current allocation. The profile pins
-Apptainer 1.4.5 and the 0.2.1 SIF, uses `--containall` rather than injecting
+Apptainer 1.4.5 and the 0.2.2 SIF, uses `--containall` rather than injecting
 `HOME`, and retains the generated Slurm script and logs in the project. See [standardized projects](docs/standardized-projects.md)
 and the complete [HPC guide](docs/hpc-singularity.md).
 

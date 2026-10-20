@@ -10,12 +10,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Docker is installed but the Docker engine is not running."
 }
 
-docker image inspect pdtomsstats:0.2.1 *> $null
+docker image inspect pdtomsstats:0.2.2 *> $null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Downloading the PDtoMSstats environment for the first run..."
-    docker pull ghcr.io/openomics/pdtomsstats:0.2.1
+    docker pull ghcr.io/openomics/pdtomsstats:0.2.2
     if ($LASTEXITCODE -eq 0) {
-        docker tag ghcr.io/openomics/pdtomsstats:0.2.1 pdtomsstats:0.2.1
+        docker tag ghcr.io/openomics/pdtomsstats:0.2.2 pdtomsstats:0.2.2
     }
     else {
         Write-Host "The published image could not be downloaded; building it locally..."

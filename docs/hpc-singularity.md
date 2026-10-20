@@ -31,8 +31,8 @@ apptainer --version
 
 mkdir -p /data/Proteomics_IDSS/SIFs
 apptainer pull \
-  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.1.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.2.1
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.2.sif \
+  docker://ghcr.io/openomics/pdtomsstats:0.2.2
 ```
 
 Verify the installed image:
@@ -41,11 +41,18 @@ Verify the installed image:
 apptainer exec --containall --cleanenv \
   --bind /data/Proteomics_IDSS/prod/PDtoMSstats:/opt/PDtoMSstats:ro \
   --pwd /opt/PDtoMSstats \
-  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.1.sif \
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.2.sif \
   Rscript scripts/check_environment.R
 ```
 
 The final line should be `PDtoMSstats environment check: PASS`.
+
+The Biowulf profile treats `/data/Proteomics_IDSS` as the stable logical data
+root. The launcher resolves its host source and mounts each project at both
+the logical `/data/...` path and its physical `/vf/users/...` path. Commands
+and YAML files may therefore use either spelling consistently. This does not
+create symlinks in the project or home directory, and `--containall` remains
+enabled.
 
 ## Create a project
 

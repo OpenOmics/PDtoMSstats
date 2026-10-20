@@ -3,7 +3,10 @@
 # Host-side launcher; scientific processing remains in the existing R scripts.
 set -euo pipefail
 
-LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# Preserve the path spelling used to invoke the launcher. On Biowulf,
+# /data/<group> and /vf/users/<group> may resolve to the same directory, but
+# both names are meaningful container mount points.
+LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -L)"
 VERSION_FILE="$LAUNCHER_DIR/VERSION"
 
 die() { printf 'PDtoMSstats: %s\n' "$*" >&2; exit 1; }
@@ -91,14 +94,18 @@ yaml_value() {
   ' "$file"
 }
 
-absolute_dir() { mkdir -p "$1"; (cd "$1" && pwd -P); }
+absolute_dir() { mkdir -p "$1"; (cd "$1" && pwd -L); }
 existing_dir() {
+  [[ -d "$1" ]] || die "directory not found: $1"
+  (cd "$1" && pwd -L)
+}
+physical_dir() {
   [[ -d "$1" ]] || die "directory not found: $1"
   (cd "$1" && pwd -P)
 }
 absolute_file() {
   local parent
-  parent=$(cd "$(dirname "$1")" && pwd -P)
+  parent=$(cd "$(dirname "$1")" && pwd -L)
   printf '%s/%s\n' "$parent" "$(basename "$1")"
 }
 
@@ -320,12 +327,13 @@ load_runtime_module() {
 run_apptainer() {
   local profile_file=$1 project_dir=$2 runtime_override=$3 image_override=$4 job_tmp_override=$5
   shift 5
-  local runtime image module_name containall cleanenv
+  local runtime image module_name containall cleanenv path_alias_root
   runtime=${runtime_override:-$(yaml_value "$profile_file" runtime)}
   image=${image_override:-$(yaml_value "$profile_file" image)}
   module_name=$(yaml_value "$profile_file" module)
   containall=$(yaml_value "$profile_file" containall)
   cleanenv=$(yaml_value "$profile_file" cleanenv)
+  path_alias_root=$(yaml_value "$profile_file" path_alias_root)
   [[ -n "$runtime" && "$runtime" != null ]] || runtime=apptainer
   [[ -n "$image" && "$image" != null ]] || die "profile does not define image"
   [[ -f "$image" ]] || die "SIF not found: $image"
@@ -340,16 +348,47 @@ run_apptainer() {
   export APPTAINER_TMPDIR="$job_tmp"
   umask 0007
 
-  local version commit
+  local version commit launcher_physical project_physical job_tmp_physical
   version=$(tr -d '[:space:]' < "$VERSION_FILE")
   commit=$(git -C "$LAUNCHER_DIR" rev-parse HEAD 2>/dev/null || printf unknown)
+  launcher_physical=$(physical_dir "$LAUNCHER_DIR")
+  project_physical=$(physical_dir "$project_dir")
+  job_tmp_physical=$(physical_dir "$job_tmp")
 
   local runtime_args=(exec)
   [[ "$containall" == false ]] || runtime_args+=(--containall)
   [[ "$cleanenv" == false ]] || runtime_args+=(--cleanenv)
-  runtime_args+=(--bind "$LAUNCHER_DIR:/opt/PDtoMSstats:ro")
-  [[ "$project_dir" == "$LAUNCHER_DIR" ]] || runtime_args+=(--bind "$project_dir:$project_dir")
-  runtime_args+=(--bind "$job_tmp:/jobtmp" --pwd /opt/PDtoMSstats)
+  runtime_args+=(--bind "$launcher_physical:/opt/PDtoMSstats:ro")
+
+  # Use the resolved directory as the bind source, but retain the user's path
+  # as a destination. Bind the physical destination too so configurations
+  # produced by older releases continue to work.
+  runtime_args+=(--bind "$project_physical:$project_dir")
+  if [[ "$project_physical" != "$project_dir" ]]; then
+    runtime_args+=(--bind "$project_physical:$project_physical")
+  fi
+
+  # A profile may name a preferred logical root such as
+  # /data/Proteomics_IDSS. Resolve it on the host and expose the equivalent
+  # project path even when the command was entered through /vf/users.
+  if [[ -n "$path_alias_root" && "$path_alias_root" != null ]]; then
+    if [[ -d "$path_alias_root" ]]; then
+      local alias_root_physical project_alias project_suffix
+      path_alias_root=$(existing_dir "$path_alias_root")
+      alias_root_physical=$(physical_dir "$path_alias_root")
+      if [[ "$project_physical" == "$alias_root_physical" || "$project_physical" == "$alias_root_physical"/* ]]; then
+        project_suffix=${project_physical#"$alias_root_physical"}
+        project_alias="$path_alias_root$project_suffix"
+        if [[ "$project_alias" != "$project_dir" && "$project_alias" != "$project_physical" ]]; then
+          runtime_args+=(--bind "$project_physical:$project_alias")
+        fi
+      fi
+    else
+      warn "profile path_alias_root does not exist: $path_alias_root"
+    fi
+  fi
+
+  runtime_args+=(--bind "$job_tmp_physical:/jobtmp" --pwd /opt/PDtoMSstats)
   runtime_args+=(--env "OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1,TMPDIR=/jobtmp,TMP=/jobtmp,TEMP=/jobtmp,XDG_CACHE_HOME=/jobtmp/.cache")
   runtime_args+=(--env "PDTOMSSTATS_WORKFLOW_VERSION=$version")
   runtime_args+=(--env "PDTOMSSTATS_WORKFLOW_COMMIT=$commit")
