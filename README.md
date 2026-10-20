@@ -83,100 +83,36 @@ See the [one-command guide](docs/command.md), [Docker instructions](docs/docker.
 
 ## HPC with Singularity or Apptainer
 
-The same published container can run on an HPC system without Docker. No R
-analysis code changes are required. If the site provides `apptainer` rather
-than `singularity`, replace the command name below; the arguments are the same.
-
-Pull the released container once, normally on a login or transfer node with
-internet access:
+The same published container runs on HPC without changing the R analysis. The
+host-side launcher provides project templates, an Apptainer execution profile,
+home isolation, explicit bind mounts, and Slurm submission.
 
 ```bash
-module load singularity
-mkdir -p containers
-singularity pull containers/pdtomsstats_0.1.2.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.1.2
+PDT=/data/Proteomics_IDSS/prod/PDtoMSstats/pdtomsstats
+PROJECT=/data/Proteomics_IDSS/projects/my-project
+
+"$PDT" init --project "$PROJECT" --profile biowulf \
+  --modules main,timecourse --label "My proteomics project"
 ```
 
-For a private GitHub Container Registry package, first use
-`singularity registry login --username YOUR_GITHUB_USERNAME docker://ghcr.io`
-and enter a GitHub token with `read:packages` permission. Never put the token
-in a job script.
-
-### Interactive compute node
-
-Request an interactive compute allocation according to local policy. For a
-Slurm cluster, a typical request is:
+After copying data and editing the generated YAML files:
 
 ```bash
-srun --pty --cpus-per-task=2 --mem=32G --time=04:00:00 bash
+"$PDT" validate --project "$PROJECT" \
+  --config "$PROJECT/config/my-project-main.yml" --outputs html
+
+"$PDT" run --project "$PROJECT" \
+  --config "$PROJECT/config/my-project-main.yml" \
+  --outputs html --cpus 2 --memory 64G --walltime 12:00:00
+
+"$PDT" status --project "$PROJECT"
 ```
 
-From the PDtoMSstats repository root on the allocated node, run the main
-MSstats stage:
-
-```bash
-singularity exec \
-  --cleanenv \
-  --bind "$PWD:/workspace" \
-  --pwd /workspace \
-  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.2.sif \
-  Rscript scripts/run_pipeline.R config/local-my-project.yml
-```
-
-Add the time-course configuration as the second argument to run
-orthogonal-polynomial maSigPro, limma natural splines, and method-specific
-Mfuzz analyses after MSstats:
-
-```bash
-singularity exec \
-  --cleanenv \
-  --bind "$PWD:/workspace" \
-  --pwd /workspace \
-  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.2.sif \
-  Rscript scripts/run_pipeline.R \
-  config/local-my-project.yml \
-  config/local-my-project-timecourse.yml
-```
-
-Do not run a full analysis on a shared login node unless the HPC administrators
-explicitly allow it.
-
-### Slurm batch job
-
-Save the following as `run-pdtomsstats.slurm`, replacing the two paths:
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=pdtomsstats
-#SBATCH --cpus-per-task=2
-#SBATCH --mem=32G
-#SBATCH --time=08:00:00
-#SBATCH --output=pdtomsstats-%j.out
-
-set -euo pipefail
-module load singularity
-
-PROJECT_DIR="/path/to/PDtoMSstats"
-IMAGE="/path/to/pdtomsstats_0.1.2.sif"
-
-cd "$PROJECT_DIR"
-
-singularity exec \
-  --cleanenv \
-  --bind "$PROJECT_DIR:/workspace" \
-  --pwd /workspace \
-  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  "$IMAGE" \
-  Rscript scripts/run_pipeline.R config/local-my-project.yml
-```
-
-Submit it with `sbatch run-pdtomsstats.slurm`. The YAML `number_of_cores` must
-not exceed `--cpus-per-task`. See the complete
-[Singularity/Apptainer HPC guide](docs/hpc-singularity.md) for input checks,
-time-course execution, Excel export, private-registry access, and
-troubleshooting.
+The Biowulf profile makes plain `run` submit a detached Slurm job. Add
+`--mode local` to run inside the current allocation. The profile pins
+Apptainer 1.4.5 and the 0.2.0 SIF, uses `--containall` rather than injecting
+`HOME`, and retains the generated Slurm script and logs in the project. See [standardized projects](docs/standardized-projects.md)
+and the complete [HPC guide](docs/hpc-singularity.md).
 
 ## Analyze a new project
 

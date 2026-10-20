@@ -1,7 +1,7 @@
 Package: PDtoMSstats
 Type: Project
 Title: Proteome Discoverer PSM to MSstats Workflow
-Version: 0.1.2
+Version: 0.2.0
 Authors@R: c(
     person("Subrata", "Paul", role = "aut"),
     person("Kevin", "Cormier", role = c("aut", "cre")))

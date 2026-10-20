@@ -19,6 +19,8 @@ website:
         menu:
           - href: command.md
             text: One-command runner
+          - href: standardized-projects.md
+            text: Standardized projects
           - href: getting-started.md
             text: Getting started
           - href: example.md

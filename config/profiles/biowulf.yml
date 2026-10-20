@@ -1,0 +1,18 @@
+# OpenOmics/Proteomics_IDSS execution profile for NIH Biowulf.
+runtime: "apptainer"
+module: "apptainer/1.4.5"
+image: "/data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.0.sif"
+group: "Proteomics_IDSS"
+default_mode: "slurm"
+
+# Isolate the host home and environment. The launcher explicitly binds only
+# the workflow, project, and job temporary directory.
+containall: true
+cleanenv: true
+
+# Default Slurm resources. Each submission may override these values.
+slurm_cpus: 2
+slurm_memory: "64G"
+slurm_time: "12:00:00"
+slurm_partition: null
+slurm_account: null

@@ -34,7 +34,8 @@ parsed <- pdt_parse_cli(c(
   "--maximum-allowed-fold-change", "1000",
   "--gsea-pvalue-cutoff", "0.5",
   "--spline-df", "4",
-  "--limma-interaction-fdr", "0.1"
+  "--limma-interaction-fdr", "0.1",
+  "--with-dependencies"
 ))
 stopifnot(
   identical(parsed$command, "run"),
@@ -48,8 +49,42 @@ stopifnot(
   identical(parsed$options$maximum_allowed_fold_change, "1000"),
   identical(parsed$options$gsea_pvalue_cutoff, "0.5"),
   identical(parsed$options$spline_df, "4"),
-  identical(parsed$options$limma_interaction_fdr, "0.1")
+  identical(parsed$options$limma_interaction_fdr, "0.1"),
+  identical(parsed$options$with_dependencies, TRUE)
 )
+
+stopifnot(
+  identical(
+    pdt_resolve_outputs(list(outputs = "all"), interactive_allowed = FALSE),
+    c("html", "excel", "timecourse")
+  ),
+  identical(
+    pdt_resolve_outputs(
+      list(outputs = "timecourse,excel"), interactive_allowed = FALSE
+    ),
+    c("timecourse", "excel")
+  )
+)
+
+dependency_file <- tempfile("pdtomsstats-analysis-", fileext = ".rds")
+reuse_error <- tryCatch(
+  pdt_plan_main_analysis(c("timecourse"), dependency_file),
+  error = identity
+)
+stopifnot(
+  inherits(reuse_error, "error"),
+  grepl("--with-dependencies", conditionMessage(reuse_error), fixed = TRUE)
+)
+dependency_plan <- pdt_plan_main_analysis(
+  c("timecourse"), dependency_file, with_dependencies = TRUE
+)
+stopifnot(isTRUE(dependency_plan$run), identical(dependency_plan$action, "run"))
+stopifnot(file.create(dependency_file))
+reuse_plan <- pdt_plan_main_analysis(c("excel", "timecourse"), dependency_file)
+stopifnot(!reuse_plan$run, identical(reuse_plan$action, "reuse"))
+html_plan <- pdt_plan_main_analysis(c("html", "excel"), dependency_file)
+stopifnot(isTRUE(html_plan$run), identical(html_plan$action, "run"))
+unlink(dependency_file)
 
 alternative_psm <- data.frame(
   Run = "run-1",

@@ -75,6 +75,7 @@ Time-course options:
   --max-clusters N
   --timecourse-extra-qmd FILE         Repeatable custom time-course fragment
   --timecourse-template FILE          Replace the standard time-course QMD
+  --with-dependencies                 Build a missing main-analysis RDS first
 
 Advanced settings remain available in the YAML configuration. Command-line
 values override the corresponding YAML values.
@@ -192,13 +193,38 @@ if (!is.null(timecourse_config)) {
   )
 }
 
+analysis_file <- file.path(
+  main_config$output_dir, "msstats_workbook_export_objects.rds"
+)
+main_analysis_plan <- pdt_plan_main_analysis(
+  outputs,
+  analysis_file,
+  with_dependencies = isTRUE(parsed$options$with_dependencies)
+)
+run_main_analysis <- main_analysis_plan$run
+main_analysis_action <- main_analysis_plan$action
+
+environment_value <- function(name) {
+  value <- Sys.getenv(name, unset = "")
+  if (nzchar(value)) value else NULL
+}
+
 run_manifest <- list(
   request = main_config$request,
   requested_outputs = outputs,
+  with_dependencies = isTRUE(parsed$options$with_dependencies),
+  main_analysis_action = main_analysis_action,
+  analysis_file = analysis_file,
   main_config = main_config_file,
   timecourse_config = timecourse_config_file,
   protein_workbook = protein_workbook,
   excel_output = excel_output,
+  workflow_version = environment_value("PDTOMSSTATS_WORKFLOW_VERSION"),
+  workflow_commit = environment_value("PDTOMSSTATS_WORKFLOW_COMMIT"),
+  container_image = environment_value("PDTOMSSTATS_CONTAINER_IMAGE"),
+  execution_profile = environment_value("PDTOMSSTATS_EXECUTION_PROFILE"),
+  execution_mode = environment_value("PDTOMSSTATS_EXECUTION_MODE"),
+  slurm_job_id = environment_value("SLURM_JOB_ID"),
   created = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
 )
 manifest_file <- pdt_write_config(
@@ -249,17 +275,23 @@ run_step <- function(label, script, arguments) {
 run_step("Input validation", "check_inputs.R", execution_main_config)
 
 keep_main_html <- "html" %in% outputs
-main_html_name <- if (keep_main_html) {
-  paste0(main_config$request, ".html")
+main_html_file <- NULL
+if (run_main_analysis) {
+  main_html_name <- if (keep_main_html) {
+    paste0(main_config$request, ".html")
+  } else {
+    paste0(main_config$request, "-analysis-intermediate.html")
+  }
+  main_html_file <- file.path(main_config$output_dir, main_html_name)
+  run_step(
+    "MSstats analysis",
+    "render_report.R",
+    c(execution_main_config, main_html_name)
+  )
 } else {
-  paste0(main_config$request, "-analysis-intermediate.html")
+  cat("\n== Reusing existing MSstats analysis ==\n")
+  cat("Analysis file: ", analysis_file, "\n", sep = "")
 }
-main_html_file <- file.path(main_config$output_dir, main_html_name)
-run_step(
-  "MSstats analysis",
-  "render_report.R",
-  c(execution_main_config, main_html_name)
-)
 
 timecourse_html_file <- NULL
 if ("timecourse" %in% outputs) {
@@ -309,7 +341,7 @@ if ("excel" %in% outputs) {
   )
 }
 
-if (!keep_main_html && file.exists(main_html_file)) {
+if (!keep_main_html && !is.null(main_html_file) && file.exists(main_html_file)) {
   unlink(main_html_file)
   main_html_file <- NULL
 }

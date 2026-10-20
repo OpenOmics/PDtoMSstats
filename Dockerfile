@@ -99,6 +99,7 @@ RUN Rscript scripts/check_environment.R \
     && Rscript tests/test_example_data.R \
     && Rscript tests/test_input_functions.R \
     && Rscript tests/test_contrast_functions.R \
-    && Rscript tests/test_wrapper_functions.R
+    && Rscript tests/test_wrapper_functions.R \
+    && bash tests/test_cli.sh
 
 CMD ["Rscript", "scripts/check_environment.R"]

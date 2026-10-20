@@ -1,0 +1,69 @@
+# PDtoMSstats main-analysis template. Replace every REPLACE_* value.
+request: "__REQUEST__"
+report_label: "__REPORT_LABEL__"
+
+psm_file: "__PROJECT_DIR__/data/REPLACE_PSM_FILE.txt"
+psm_sheet: "PSMs"
+annotation_file: "__PROJECT_DIR__/data/REPLACE_ANNOTATION_FILE.xlsx"
+annotation_sheet: 1
+
+output_dir: "__PROJECT_DIR__/results"
+figures_dir: "__PROJECT_DIR__/results/figures"
+# Set this to null to generate comparisons with contrast_strategy instead.
+contrast_file: "__PROJECT_DIR__/config/__REQUEST__-contrasts.tsv"
+
+# Standard Proteome Discoverer column mapping.
+psm_file_id_column: "File ID"
+psm_sequence_column: "Annotated Sequence"
+psm_charge_column: "Charge"
+psm_protein_column: "Master Protein Accessions"
+psm_intensity_column: "Quan Value"
+annotation_file_name_column: "File Name"
+annotation_file_id_column: "File ID"
+annotation_bioreplicate_column: "BioReplicate"
+annotation_condition_column: "Condition"
+
+# Independent samples may derive either value from File ID.
+file_name_from_file_id: false
+bioreplicate_from_file_id: false
+
+# Leave null when annotation already contains Condition. Otherwise list the
+# design columns. With a null template they are joined by condition_separator.
+condition_columns: null
+condition_template: null
+condition_separator: "_"
+
+contrast_strategy: "all_pairwise"
+contrasts: null
+weighted_contrasts: null
+excluded_runs: null
+
+organism_package: "org.Hs.eg.db"
+run_gsea: true
+
+filter_confidence: "High"
+remove_contaminants: true
+remove_shared_peptides: true
+remove_single_peptide_proteins: false
+remove_few_measurements: false
+normalization: "equalizeMedians"
+summary_method: "TMP"
+mb_impute: true
+number_of_cores: 1
+qc_max_plot_rows: 250000
+
+volcano_p_cutoff: 0.05
+volcano_fc_cutoff: 1
+volcano_top_labels: 10
+differential_pvalue_cutoff: null
+differential_log2fc_cutoff: null
+maximum_allowed_fold_change: 100
+
+power_alpha: 0.05
+power_target: 0.80
+power_effect_log2fc: 1
+
+gsea_pvalue_cutoff: 0.05
+gsea_min_gene_set_size: 100
+gsea_max_gene_set_size: 500
+extra_qmd: null

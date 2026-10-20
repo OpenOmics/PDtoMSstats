@@ -14,12 +14,18 @@ scientific reporting are welcome.
    ```bash
    Rscript tests/test_structure.R
    Rscript tests/test_example_data.R
+   Rscript tests/test_wrapper_functions.R
+   bash tests/test_cli.sh
    ```
 
 4. Run the bundled example through the container when analysis or dependency
    code changes.
 5. Describe any change that could affect numerical results or comparison
    direction.
+
+Keep HPC runtime, bind, scheduler, and group defaults in
+`config/profiles/`. Keep project scaffolding in `config/templates/`. Do not
+put site-specific execution policy into the R analysis or Quarto report code.
 
 ## Reporting a problem
 

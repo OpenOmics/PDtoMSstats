@@ -25,3 +25,5 @@ jobs:
         run: Rscript tests/test_example_data.R
       - name: Check the command wrapper
         run: Rscript tests/test_wrapper_functions.R
+      - name: Check the standardized launcher
+        run: bash tests/test_cli.sh

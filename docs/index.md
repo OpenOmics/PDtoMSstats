@@ -40,8 +40,9 @@ files and design, or accept the choices directly for a reproducible batch run.
 ::: {.guide-card}
 #### HPC user
 
-Use the [SingularityCE and Apptainer guide](hpc-singularity.md) for interactive
-compute nodes and Slurm jobs.
+Use the [standardized project commands](standardized-projects.md) and
+[Apptainer guide](hpc-singularity.md) for isolated interactive runs, retained
+Slurm jobs, shared permissions, and provenance.
 
 [See interactive and Slurm examples →](hpc-singularity.md)
 :::

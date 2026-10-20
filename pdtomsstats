@@ -1,26 +1,573 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 # Authors: Subrata Paul and Kevin Cormier
-set -eu
+# Host-side launcher; scientific processing remains in the existing R scripts.
+set -euo pipefail
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "Docker was not found. Install Docker Desktop or Docker Engine first." >&2
-  exit 1
-fi
+LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+VERSION_FILE="$LAUNCHER_DIR/VERSION"
 
-if ! docker info >/dev/null 2>&1; then
-  echo "Docker is installed but the Docker engine is not running." >&2
-  exit 1
-fi
+die() { printf 'PDtoMSstats: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'PDtoMSstats warning: %s\n' "$*" >&2; }
 
-if ! docker image inspect pdtomsstats:0.1.2 >/dev/null 2>&1; then
-  echo "Downloading the PDtoMSstats environment for the first run..."
-  if docker pull ghcr.io/openomics/pdtomsstats:0.1.2; then
-    docker tag ghcr.io/openomics/pdtomsstats:0.1.2 pdtomsstats:0.1.2
-  else
-    echo "The published image could not be downloaded; building it locally..."
-    docker compose build
+usage() {
+  cat <<'EOF'
+PDtoMSstats: standardized proteomics workflow launcher
+
+Usage:
+  pdtomsstats init --project DIR [--profile PROFILE] [--modules LIST]
+  pdtomsstats validate [launcher options] [analysis options]
+  pdtomsstats run [launcher options] [analysis options]
+  pdtomsstats submit [launcher options] [Slurm options] [analysis options]
+  pdtomsstats status --project DIR [--job-id ID]
+  pdtomsstats version [--profile PROFILE]
+  pdtomsstats help
+
+Commands:
+  init       Create data/config/results/logs/tmp and editable YAML templates.
+  validate   Resolve and validate configuration without running an analysis.
+  run        Run now with Docker, or with the selected Apptainer profile.
+  submit     Generate a reproducible Slurm script and submit it with sbatch.
+  status     Show the latest recorded Slurm job, accounting, log, and outputs.
+  version    Print workflow, Git, execution-profile, and container versions.
+
+Launcher options:
+  --project DIR       Standardized project directory.
+  --profile NAME|FILE Execution profile name or YAML path (for example biowulf).
+  --mode MODE         local or slurm. Profile default is used when omitted.
+  --runtime COMMAND   Override the profile container runtime.
+  --image FILE        Override the profile SIF path.
+  --job-tmp DIR       Override the job temporary directory.
+
+Initialization options:
+  --modules LIST      main or main,timecourse (default: main).
+  --request NAME      Filesystem-safe request name (default: project basename).
+  --label TEXT        Report label (default: request name).
+  --force             Replace existing generated templates.
+
+Slurm options:
+  --job-name NAME     Job name.
+  --cpus N            CPUs per task.
+  --memory VALUE      Slurm memory request, for example 64G.
+  --walltime VALUE    Slurm time request, for example 12:00:00.
+  --partition NAME    Optional Slurm partition.
+  --account NAME      Optional Slurm account.
+
+Analysis output selection:
+  --outputs html                    Main HTML report only.
+  --outputs excel                   Formatted workbook from an existing RDS.
+  --outputs timecourse              Time-course report from an existing RDS.
+  --outputs html,excel,timecourse   Any combination; all is also accepted.
+  --with-dependencies               Build a missing main-analysis RDS first.
+
+Run `pdtomsstats run --help-analysis` for the complete analysis option list.
+Without a profile, run uses the published Docker image locally as before. A
+project created with `--profile biowulf` remembers that profile and defaults
+plain `pdtomsstats run` to a detached Slurm submission.
+EOF
+}
+
+yaml_value() {
+  local file=$1 key=$2
+  [[ -f "$file" ]] || return 0
+  awk -v wanted="$key" '
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+      split(line, pieces, ":")
+      candidate = pieces[1]
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", candidate)
+      if (candidate == wanted) {
+        sub(/^[^:]*:[[:space:]]*/, "", line)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        if ((substr(line, 1, 1) == "\"" && substr(line, length(line), 1) == "\"") ||
+            (substr(line, 1, 1) == "\047" && substr(line, length(line), 1) == "\047")) {
+          line = substr(line, 2, length(line) - 2)
+        }
+        print line
+        exit
+      }
+    }
+  ' "$file"
+}
+
+absolute_dir() { mkdir -p "$1"; (cd "$1" && pwd -P); }
+existing_dir() {
+  [[ -d "$1" ]] || die "directory not found: $1"
+  (cd "$1" && pwd -P)
+}
+absolute_file() {
+  local parent
+  parent=$(cd "$(dirname "$1")" && pwd -P)
+  printf '%s/%s\n' "$parent" "$(basename "$1")"
+}
+
+slug() {
+  local value=$1
+  value=${value//[^A-Za-z0-9._-]/-}
+  while [[ "$value" == -* ]]; do value=${value#-}; done
+  while [[ "$value" == *- ]]; do value=${value%-}; done
+  [[ -n "$value" ]] || value=pdtomsstats-analysis
+  printf '%s\n' "$value"
+}
+
+sed_escape() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
+yaml_escape() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  printf '%s' "$value"
+}
+
+render_template() {
+  local source=$1 destination=$2 project_dir=$3 request=$4 label=$5 force=$6
+  if [[ -e "$destination" && "$force" != true ]]; then
+    printf 'Keeping existing file: %s\n' "$destination"
+    return
   fi
+  local escaped_project escaped_request escaped_label
+  escaped_project=$(sed_escape "$(yaml_escape "$project_dir")")
+  escaped_request=$(sed_escape "$(yaml_escape "$request")")
+  escaped_label=$(sed_escape "$(yaml_escape "$label")")
+  sed -e "s|__PROJECT_DIR__|$escaped_project|g" \
+    -e "s|__REQUEST__|$escaped_request|g" \
+    -e "s|__REPORT_LABEL__|$escaped_label|g" \
+    "$source" > "$destination"
+  chmod 0660 "$destination" 2>/dev/null || true
+  printf 'Created: %s\n' "$destination"
+}
+
+resolve_profile() {
+  local requested=${1:-} project_dir=${2:-}
+  if [[ -z "$requested" && -n "$project_dir" ]]; then
+    requested=$(yaml_value "$project_dir/.pdtomsstats/project.yml" profile)
+  fi
+  [[ -n "$requested" && "$requested" != null ]] || return 0
+  if [[ -f "$requested" ]]; then
+    absolute_file "$requested"
+  elif [[ -f "$LAUNCHER_DIR/config/profiles/$requested.yml" ]]; then
+    printf '%s/config/profiles/%s.yml\n' "$LAUNCHER_DIR" "$requested"
+  else
+    die "execution profile not found: $requested"
+  fi
+}
+
+find_project_from_cwd() {
+  local candidate=$PWD
+  while [[ "$candidate" != / ]]; do
+    if [[ -f "$candidate/.pdtomsstats/project.yml" ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+    candidate=$(dirname "$candidate")
+  done
+}
+
+project_from_config() {
+  local config=$1 parent
+  [[ -f "$config" ]] || return 0
+  config=$(absolute_file "$config")
+  parent=$(dirname "$config")
+  if [[ $(basename "$parent") == config ]]; then
+    dirname "$parent"
+  fi
+  return 0
+}
+
+analysis_option_value() {
+  local wanted=$1 argument
+  shift
+  while (($#)); do
+    argument=$1; shift
+    if [[ "$argument" == "$wanted" && $# -gt 0 ]]; then printf '%s\n' "$1"; return; fi
+    if [[ "$argument" == "$wanted="* ]]; then printf '%s\n' "${argument#*=}"; return; fi
+  done
+}
+
+write_project_metadata() {
+  local destination=$1 project_dir=$2 request=$3 profile=$4 modules=$5
+  local main_config=$6 timecourse_config=$7
+  {
+    printf 'schema_version: 1\nproject_dir: "%s"\nrequest: "%s"\n' "$(yaml_escape "$project_dir")" "$(yaml_escape "$request")"
+    [[ -n "$profile" ]] && printf 'profile: "%s"\n' "$(yaml_escape "$profile")" || printf 'profile: null\n'
+    printf 'modules: "%s"\nmain_config: "%s"\n' "$(yaml_escape "$modules")" "$(yaml_escape "$main_config")"
+    [[ -n "$timecourse_config" ]] && printf 'timecourse_config: "%s"\n' "$(yaml_escape "$timecourse_config")" || printf 'timecourse_config: null\n'
+  } > "$destination"
+  chmod 0660 "$destination" 2>/dev/null || true
+}
+
+apply_group_permissions() {
+  local project_dir=$1 profile_file=${2:-} group=""
+  [[ -n "$profile_file" ]] && group=$(yaml_value "$profile_file" group)
+  chmod 2770 "$project_dir" "$project_dir"/{config,data,logs,results,tmp,.pdtomsstats} 2>/dev/null || true
+  if [[ -n "$group" && "$group" != null ]]; then
+    if chgrp -R "$group" "$project_dir" 2>/dev/null; then
+      chmod -R g+rwX,o-rwx "$project_dir" 2>/dev/null || true
+      find "$project_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
+      printf 'Project group: %s\n' "$group"
+    else
+      warn "could not assign all project files to group $group; ask an administrator if it is not one of your groups"
+    fi
+    if command -v setfacl >/dev/null 2>&1; then
+      setfacl -m "g:$group:rwx,m::rwx" -m "d:g:$group:rwx,d:m::rwx,d:o::---" \
+        "$project_dir" "$project_dir"/{config,data,logs,results,tmp,.pdtomsstats} 2>/dev/null || \
+        warn "default ACLs could not be applied; setgid directories and umask 0007 remain active"
+    fi
+  fi
+}
+
+command_init() {
+  local project_dir="" profile_name="" modules="" request="" label="" force=false
+  while (($#)); do
+    case "$1" in
+      --project) [[ $# -ge 2 ]] || die "--project requires a directory"; project_dir=$2; shift 2 ;;
+      --project=*) project_dir=${1#*=}; shift ;;
+      --profile) [[ $# -ge 2 ]] || die "--profile requires a value"; profile_name=$2; shift 2 ;;
+      --profile=*) profile_name=${1#*=}; shift ;;
+      --modules) [[ $# -ge 2 ]] || die "--modules requires a list"; modules=$2; shift 2 ;;
+      --modules=*) modules=${1#*=}; shift ;;
+      --request) [[ $# -ge 2 ]] || die "--request requires a name"; request=$2; shift 2 ;;
+      --request=*) request=${1#*=}; shift ;;
+      --label) [[ $# -ge 2 ]] || die "--label requires text"; label=$2; shift 2 ;;
+      --label=*) label=${1#*=}; shift ;;
+      --force) force=true; shift ;;
+      -h|--help) usage; return ;;
+      *) die "unknown init option: $1" ;;
+    esac
+  done
+  [[ -n "$project_dir" ]] || die "init requires --project DIR"
+  umask 0007
+  project_dir=$(absolute_dir "$project_dir")
+  local metadata="$project_dir/.pdtomsstats/project.yml"
+  if [[ -f "$metadata" ]]; then
+    [[ -n "$profile_name" ]] || profile_name=$(yaml_value "$metadata" profile)
+    [[ "$profile_name" != null ]] || profile_name=""
+    [[ -n "$modules" ]] || modules=$(yaml_value "$metadata" modules)
+    [[ -n "$request" ]] || request=$(yaml_value "$metadata" request)
+  fi
+  [[ -n "$modules" && "$modules" != null ]] || modules=main
+  [[ ",$modules," == *,main,* ]] || die "--modules must include main"
+  local unsupported
+  unsupported=$(printf '%s' "$modules" | tr ',' '\n' | awk '$0 != "main" && $0 != "timecourse" {print}')
+  [[ -z "$unsupported" ]] || die "unsupported module(s): $(printf '%s' "$unsupported" | paste -sd, -)"
+  [[ -n "$request" ]] || request=$(basename "$project_dir")
+  request=$(slug "$request")
+  [[ -n "$label" ]] || label=$request
+  mkdir -p "$project_dir"/{config,data,logs,results,tmp,.pdtomsstats}
+  local profile_file="" main_config timecourse_config=""
+  profile_file=$(resolve_profile "$profile_name" "$project_dir")
+  main_config="$project_dir/config/$request-main.yml"
+  render_template "$LAUNCHER_DIR/config/templates/main.yml" "$main_config" "$project_dir" "$request" "$label" "$force"
+  render_template "$LAUNCHER_DIR/config/templates/contrasts.tsv" "$project_dir/config/$request-contrasts.tsv" "$project_dir" "$request" "$label" "$force"
+  if [[ ",$modules," == *,timecourse,* ]]; then
+    timecourse_config="$project_dir/config/$request-timecourse.yml"
+    render_template "$LAUNCHER_DIR/config/templates/timecourse.yml" "$timecourse_config" "$project_dir" "$request" "$label" "$force"
+  fi
+  write_project_metadata "$project_dir/.pdtomsstats/project.yml" "$project_dir" "$request" "$profile_name" "$modules" "$main_config" "$timecourse_config"
+  apply_group_permissions "$project_dir" "$profile_file"
+  printf '\nPDtoMSstats project initialized.\nProject: %s\nMain configuration: %s\n' "$project_dir" "$main_config"
+  [[ -z "$timecourse_config" ]] || printf 'Time-course configuration: %s\n' "$timecourse_config"
+  printf 'Next: edit the YAML file(s), then validate the project.\n'
+}
+
+prepare_docker() {
+  command -v docker >/dev/null 2>&1 || die "Docker was not found. Select an Apptainer profile on HPC."
+  docker info >/dev/null 2>&1 || die "Docker is installed but its engine is not running."
+  local image_version
+  image_version=$(tr -d '[:space:]' < "$VERSION_FILE")
+  if ! docker image inspect "pdtomsstats:$image_version" >/dev/null 2>&1; then
+    printf 'Downloading the PDtoMSstats environment for the first run...\n'
+    if docker pull "ghcr.io/openomics/pdtomsstats:$image_version"; then
+      docker tag "ghcr.io/openomics/pdtomsstats:$image_version" "pdtomsstats:$image_version"
+    else
+      warn "published image could not be downloaded; building it locally"
+      (cd "$LAUNCHER_DIR" && docker compose build)
+    fi
+  fi
+}
+
+run_docker() {
+  local project_dir=$1; shift
+  prepare_docker
+  local version commit
+  version=$(tr -d '[:space:]' < "$VERSION_FILE")
+  commit=$(git -C "$LAUNCHER_DIR" rev-parse HEAD 2>/dev/null || printf unknown)
+  local docker_args=(compose run --rm
+    -e "PDTOMSSTATS_WORKFLOW_VERSION=$version"
+    -e "PDTOMSSTATS_WORKFLOW_COMMIT=$commit"
+    -e "PDTOMSSTATS_CONTAINER_IMAGE=ghcr.io/openomics/pdtomsstats:$version"
+    -e "PDTOMSSTATS_EXECUTION_PROFILE=docker"
+    -e "PDTOMSSTATS_EXECUTION_MODE=local")
+  [[ -z "$project_dir" || "$project_dir" == "$LAUNCHER_DIR" ]] || docker_args+=(-v "$project_dir:$project_dir")
+  docker_args+=(pdtomsstats Rscript scripts/pdtomsstats.R "$@")
+  (cd "$LAUNCHER_DIR" && exec docker "${docker_args[@]}")
+}
+
+load_runtime_module() {
+  local runtime=$1 module_name=$2
+  command -v "$runtime" >/dev/null 2>&1 && return
+  if [[ -n "$module_name" && "$module_name" != null ]]; then
+    if type module >/dev/null 2>&1; then
+      module load "$module_name"
+    elif [[ -r /etc/profile.d/modules.sh ]]; then
+      source /etc/profile.d/modules.sh
+      module load "$module_name"
+    fi
+  fi
+  command -v "$runtime" >/dev/null 2>&1 || die "$runtime is unavailable; load the configured module first"
+}
+
+run_apptainer() {
+  local profile_file=$1 project_dir=$2 runtime_override=$3 image_override=$4 job_tmp_override=$5
+  shift 5
+  local runtime image module_name containall cleanenv
+  runtime=${runtime_override:-$(yaml_value "$profile_file" runtime)}
+  image=${image_override:-$(yaml_value "$profile_file" image)}
+  module_name=$(yaml_value "$profile_file" module)
+  containall=$(yaml_value "$profile_file" containall)
+  cleanenv=$(yaml_value "$profile_file" cleanenv)
+  [[ -n "$runtime" && "$runtime" != null ]] || runtime=apptainer
+  [[ -n "$image" && "$image" != null ]] || die "profile does not define image"
+  [[ -f "$image" ]] || die "SIF not found: $image"
+  load_runtime_module "$runtime" "$module_name"
+  [[ -n "$project_dir" ]] || project_dir=$LAUNCHER_DIR
+  project_dir=$(existing_dir "$project_dir")
+  local job_tmp=${job_tmp_override:-${TMPDIR:-}}
+  [[ -n "$job_tmp" && -d "$job_tmp" ]] || job_tmp="$project_dir/tmp"
+  mkdir -p "$job_tmp"
+  unset APPTAINERENV_HOME SINGULARITYENV_HOME
+  unset SINGULARITY_TMPDIR
+  export APPTAINER_TMPDIR="$job_tmp"
+  umask 0007
+
+  local version commit
+  version=$(tr -d '[:space:]' < "$VERSION_FILE")
+  commit=$(git -C "$LAUNCHER_DIR" rev-parse HEAD 2>/dev/null || printf unknown)
+
+  local runtime_args=(exec)
+  [[ "$containall" == false ]] || runtime_args+=(--containall)
+  [[ "$cleanenv" == false ]] || runtime_args+=(--cleanenv)
+  runtime_args+=(--bind "$LAUNCHER_DIR:/opt/PDtoMSstats:ro")
+  [[ "$project_dir" == "$LAUNCHER_DIR" ]] || runtime_args+=(--bind "$project_dir:$project_dir")
+  runtime_args+=(--bind "$job_tmp:/jobtmp" --pwd /opt/PDtoMSstats)
+  runtime_args+=(--env "OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1,TMPDIR=/jobtmp,TMP=/jobtmp,TEMP=/jobtmp,XDG_CACHE_HOME=/jobtmp/.cache")
+  runtime_args+=(--env "PDTOMSSTATS_WORKFLOW_VERSION=$version")
+  runtime_args+=(--env "PDTOMSSTATS_WORKFLOW_COMMIT=$commit")
+  runtime_args+=(--env "PDTOMSSTATS_CONTAINER_IMAGE=$image")
+  runtime_args+=(--env "PDTOMSSTATS_EXECUTION_PROFILE=$profile_file")
+  runtime_args+=(--env "PDTOMSSTATS_EXECUTION_MODE=${PDTOMSSTATS_EXECUTION_MODE:-local}")
+  runtime_args+=("$image" Rscript /opt/PDtoMSstats/scripts/pdtomsstats.R "$@")
+  exec "$runtime" "${runtime_args[@]}"
+}
+
+shell_quote_command() {
+  local output="" value quoted
+  for value in "$@"; do printf -v quoted '%q' "$value"; output+=" $quoted"; done
+  printf '%s' "${output# }"
+}
+
+command_submit() {
+  local project_dir=$1 profile_file=$2 runtime_override=$3 image_override=$4 job_tmp=$5
+  local job_name=$6 cpus=$7 memory=$8 walltime=$9 partition=${10} account=${11}
+  shift 11
+  local -a analysis_args=("$@")
+  [[ -n "$project_dir" ]] || die "submit requires --project or a standardized project directory"
+  [[ -n "$profile_file" ]] || die "submit requires an Apptainer execution profile"
+  command -v sbatch >/dev/null 2>&1 || die "sbatch was not found"
+  project_dir=$(existing_dir "$project_dir")
+  mkdir -p "$project_dir/logs" "$project_dir/.pdtomsstats"
+  umask 0007
+  [[ -n "$job_name" ]] || job_name="$(slug "$(basename "$project_dir")")-pdtomsstats"
+  [[ -n "$cpus" ]] || cpus=$(yaml_value "$profile_file" slurm_cpus)
+  [[ -n "$memory" ]] || memory=$(yaml_value "$profile_file" slurm_memory)
+  [[ -n "$walltime" ]] || walltime=$(yaml_value "$profile_file" slurm_time)
+  [[ -n "$partition" ]] || partition=$(yaml_value "$profile_file" slurm_partition)
+  [[ -n "$account" ]] || account=$(yaml_value "$profile_file" slurm_account)
+  [[ -n "$cpus" && "$cpus" != null ]] || cpus=2
+  [[ -n "$memory" && "$memory" != null ]] || memory=32G
+  [[ -n "$walltime" && "$walltime" != null ]] || walltime=08:00:00
+
+  local stamp script_file launch_text submission job_id
+  stamp=$(date +%Y%m%d-%H%M%S)
+  script_file="$project_dir/logs/pdtomsstats-$stamp.slurm"
+  # Force local execution inside the allocation. Without this override, a
+  # Slurm-default profile would recursively submit another job.
+  local -a launch=("$LAUNCHER_DIR/pdtomsstats" run --mode local --project "$project_dir" --profile "$profile_file")
+  [[ -z "$runtime_override" ]] || launch+=(--runtime "$runtime_override")
+  [[ -z "$image_override" ]] || launch+=(--image "$image_override")
+  [[ -z "$job_tmp" ]] || launch+=(--job-tmp "$job_tmp")
+  launch+=("${analysis_args[@]}")
+  launch_text=$(shell_quote_command "${launch[@]}")
+  {
+    printf '#!/usr/bin/env bash\n# Generated by PDtoMSstats.\n'
+    printf '#SBATCH --job-name=%s\n#SBATCH --cpus-per-task=%s\n#SBATCH --mem=%s\n#SBATCH --time=%s\n' "$job_name" "$cpus" "$memory" "$walltime"
+    printf '#SBATCH --output=%s/logs/pdtomsstats-%%j.out\n#SBATCH --error=%s/logs/pdtomsstats-%%j.err\n' "$project_dir" "$project_dir"
+    [[ -z "$partition" || "$partition" == null ]] || printf '#SBATCH --partition=%s\n' "$partition"
+    [[ -z "$account" || "$account" == null ]] || printf '#SBATCH --account=%s\n' "$account"
+    printf '\nset -euo pipefail\numask 0007\nexport PDTOMSSTATS_SUBMITTED_AT=%q\nexport PDTOMSSTATS_EXECUTION_MODE=slurm\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$launch_text"
+  } > "$script_file"
+  chmod 0770 "$script_file"
+  submission=$(sbatch "$script_file")
+  printf '%s\n' "$submission"
+  job_id=$(printf '%s\n' "$submission" | awk '{print $NF}')
+  [[ "$job_id" =~ ^[0-9]+$ ]] || die "could not parse the Slurm job ID"
+  printf '%s\n' "$job_id" > "$project_dir/.pdtomsstats/last-job-id"
+  printf '%s\n' "$script_file" > "$project_dir/.pdtomsstats/last-job-script"
+  printf 'Job script: %s\n' "$script_file"
+}
+
+command_status() {
+  local project_dir="" job_id=""
+  while (($#)); do
+    case "$1" in
+      --project) [[ $# -ge 2 ]] || die "--project requires a directory"; project_dir=$2; shift 2 ;;
+      --project=*) project_dir=${1#*=}; shift ;;
+      --job-id) [[ $# -ge 2 ]] || die "--job-id requires a value"; job_id=$2; shift 2 ;;
+      --job-id=*) job_id=${1#*=}; shift ;;
+      -h|--help) usage; return ;;
+      *) die "unknown status option: $1" ;;
+    esac
+  done
+  [[ -n "$project_dir" ]] || project_dir=$(find_project_from_cwd)
+  [[ -n "$project_dir" && -d "$project_dir" ]] || die "status requires --project DIR"
+  project_dir=$(existing_dir "$project_dir")
+  [[ -n "$job_id" || ! -f "$project_dir/.pdtomsstats/last-job-id" ]] || job_id=$(tr -d '[:space:]' < "$project_dir/.pdtomsstats/last-job-id")
+  printf 'Project: %s\n' "$project_dir"
+  if [[ -n "$job_id" ]]; then
+    printf 'Latest job: %s\n' "$job_id"
+    local active_job=""
+    if command -v squeue >/dev/null 2>&1; then
+      active_job=$(squeue -h -j "$job_id")
+    fi
+    if [[ -n "$active_job" ]]; then
+      squeue -j "$job_id" -o '%.18i %.12T %.10M %.10l %.6D %R'
+    elif command -v sacct >/dev/null 2>&1; then
+      sacct -j "$job_id" --format=JobID,State,Elapsed,ExitCode,MaxRSS -X
+    else
+      printf 'Scheduler status tools are unavailable in this shell.\n'
+    fi
+  else
+    printf 'No submitted job has been recorded.\n'
+  fi
+  local latest_log=""
+  if [[ -n "$job_id" && -f "$project_dir/logs/pdtomsstats-$job_id.out" ]]; then
+    latest_log="$project_dir/logs/pdtomsstats-$job_id.out"
+  else
+    latest_log=$(find "$project_dir/logs" -maxdepth 1 -type f -name 'pdtomsstats-*.out' -print 2>/dev/null | sort | tail -n 1)
+  fi
+  if [[ -n "$latest_log" ]]; then printf '\nLatest log: %s\n' "$latest_log"; tail -n 20 "$latest_log"; fi
+  printf '\nGenerated reports/workbooks:\n'
+  find "$project_dir/results" -type f \( -name '*.html' -o -name '*.xlsx' \) -print 2>/dev/null | sort | tail -n 20
+}
+
+command_version() {
+  local profile_name="" project_dir=""
+  while (($#)); do
+    case "$1" in
+      --profile) [[ $# -ge 2 ]] || die "--profile requires a value"; profile_name=$2; shift 2 ;;
+      --profile=*) profile_name=${1#*=}; shift ;;
+      --project) [[ $# -ge 2 ]] || die "--project requires a directory"; project_dir=$2; shift 2 ;;
+      --project=*) project_dir=${1#*=}; shift ;;
+      *) die "unknown version option: $1" ;;
+    esac
+  done
+  [[ -n "$project_dir" ]] || project_dir=$(find_project_from_cwd)
+  local version commit dirty="" profile_file=""
+  version=$(tr -d '[:space:]' < "$VERSION_FILE")
+  commit=$(git -C "$LAUNCHER_DIR" rev-parse --short HEAD 2>/dev/null || printf unknown)
+  [[ -z "$(git -C "$LAUNCHER_DIR" status --short 2>/dev/null)" ]] || dirty=' (modified)'
+  printf 'PDtoMSstats: %s\nWorkflow: %s\nGit commit: %s%s\n' "$version" "$LAUNCHER_DIR" "$commit" "$dirty"
+  profile_file=$(resolve_profile "$profile_name" "$project_dir")
+  if [[ -n "$profile_file" ]]; then
+    printf 'Profile: %s\nDefault mode: %s\nRuntime: %s\nContainer: %s\n' \
+      "$profile_file" "$(yaml_value "$profile_file" default_mode)" \
+      "$(yaml_value "$profile_file" runtime)" "$(yaml_value "$profile_file" image)"
+  else
+    printf 'Runtime: Docker\nContainer: ghcr.io/openomics/pdtomsstats:%s\n' "$version"
+  fi
+}
+
+command=run
+if [[ $# -gt 0 && "$1" != -* ]]; then command=$1; shift; fi
+case "$command" in
+  help|-h|--help) usage; exit 0 ;;
+  init) command_init "$@"; exit 0 ;;
+  status) command_status "$@"; exit 0 ;;
+  version) command_version "$@"; exit 0 ;;
+  run|validate|submit) ;;
+  *) die "unknown command: $command (use 'pdtomsstats help')" ;;
+esac
+
+project_dir=""; profile_name=""; mode=""; runtime_override=""; image_override=""; job_tmp=""
+job_name=""; cpus=""; memory=""; walltime=""; partition=""; account=""
+declare -a analysis_args=()
+while (($#)); do
+  case "$1" in
+    --project) [[ $# -ge 2 ]] || die "--project requires a directory"; project_dir=$2; shift 2 ;;
+    --project=*) project_dir=${1#*=}; shift ;;
+    --profile) [[ $# -ge 2 ]] || die "--profile requires a value"; profile_name=$2; shift 2 ;;
+    --profile=*) profile_name=${1#*=}; shift ;;
+    --mode) [[ $# -ge 2 ]] || die "--mode requires local or slurm"; mode=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]'); shift 2 ;;
+    --mode=*) mode=${1#*=}; mode=$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]'); shift ;;
+    --runtime) [[ $# -ge 2 ]] || die "--runtime requires a command"; runtime_override=$2; shift 2 ;;
+    --runtime=*) runtime_override=${1#*=}; shift ;;
+    --image) [[ $# -ge 2 ]] || die "--image requires a file"; image_override=$2; shift 2 ;;
+    --image=*) image_override=${1#*=}; shift ;;
+    --job-tmp) [[ $# -ge 2 ]] || die "--job-tmp requires a directory"; job_tmp=$2; shift 2 ;;
+    --job-tmp=*) job_tmp=${1#*=}; shift ;;
+    --job-name) [[ $# -ge 2 ]] || die "--job-name requires a name"; job_name=$2; shift 2 ;;
+    --job-name=*) job_name=${1#*=}; shift ;;
+    --cpus) [[ $# -ge 2 ]] || die "--cpus requires a number"; cpus=$2; shift 2 ;;
+    --cpus=*) cpus=${1#*=}; shift ;;
+    --memory) [[ $# -ge 2 ]] || die "--memory requires a value"; memory=$2; shift 2 ;;
+    --memory=*) memory=${1#*=}; shift ;;
+    --walltime) [[ $# -ge 2 ]] || die "--walltime requires a value"; walltime=$2; shift 2 ;;
+    --walltime=*) walltime=${1#*=}; shift ;;
+    --partition) [[ $# -ge 2 ]] || die "--partition requires a value"; partition=$2; shift 2 ;;
+    --partition=*) partition=${1#*=}; shift ;;
+    --account) [[ $# -ge 2 ]] || die "--account requires a value"; account=$2; shift 2 ;;
+    --account=*) account=${1#*=}; shift ;;
+    --help-analysis) analysis_args+=(--help); shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) analysis_args+=("$1"); shift ;;
+  esac
+done
+
+if [[ -z "$project_dir" ]]; then
+  config_path=$(analysis_option_value --config "${analysis_args[@]}")
+  [[ -z "$config_path" ]] || project_dir=$(project_from_config "$config_path")
+fi
+[[ -n "$project_dir" ]] || project_dir=$(find_project_from_cwd)
+[[ -z "$project_dir" ]] || project_dir=$(existing_dir "$project_dir")
+profile_file=$(resolve_profile "$profile_name" "$project_dir")
+
+if [[ -n "$mode" && "$mode" != local && "$mode" != slurm ]]; then
+  die "--mode must be local or slurm"
 fi
 
-exec docker compose run --rm pdtomsstats \
-  Rscript scripts/pdtomsstats.R "$@"
+if [[ "$command" == validate ]]; then
+  [[ -z "$mode" || "$mode" == local ]] || die "validate supports only --mode local"
+  analysis_args+=(--dry-run --non-interactive)
+  mode=local
+  command=run
+elif [[ "$command" == submit ]]; then
+  [[ -z "$mode" || "$mode" == slurm ]] || die "submit cannot use --mode local; use run --mode local"
+  mode=slurm
+elif [[ -z "$mode" ]]; then
+  mode=$(yaml_value "$profile_file" default_mode)
+  [[ -n "$mode" && "$mode" != null ]] || mode=local
+  mode=$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')
+fi
+
+[[ "$mode" == local || "$mode" == slurm ]] || \
+  die "execution profile default_mode must be local or slurm"
+
+if [[ "$mode" == slurm ]]; then
+  command_submit "$project_dir" "$profile_file" "$runtime_override" "$image_override" "$job_tmp" "$job_name" "$cpus" "$memory" "$walltime" "$partition" "$account" "${analysis_args[@]}"
+  exit 0
+fi
+if [[ -n "$profile_file" ]]; then
+  run_apptainer "$profile_file" "$project_dir" "$runtime_override" "$image_override" "$job_tmp" run "${analysis_args[@]}"
+else
+  run_docker "$project_dir" run "${analysis_args[@]}"
+fi

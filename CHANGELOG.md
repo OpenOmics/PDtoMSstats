@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-20
+
+- Added standardized `init`, `validate`, `run`, `submit`, `status`, and
+  `version` commands without changing the scientific analysis scripts.
+- Made `pdtomsstats run` use the execution profile's default mode. The Biowulf
+  profile submits a detached Slurm job by default; `--mode local` runs in the
+  current allocation and `--mode slurm` explicitly submits.
+- Added reusable main/time-course/contrast templates and a Biowulf execution
+  profile with pinned Apptainer/SIF settings and group permissions.
+- Isolated host home directories with `--containall`, removed inherited HOME
+  overrides, and explicitly bound only workflow, project, and job scratch.
+- Allowed HTML, Excel, and time-course outputs to run independently; downstream
+  outputs reuse the existing main-analysis RDS unless `--with-dependencies` is
+  requested.
+- Added retained Slurm scripts, job tracking, provenance reporting, launcher
+  tests, and standardized-project/HPC documentation.
+
 ## 0.1.2 - 2026-10-09
 
 - Retained GitHub workflow definitions in the Docker build context so the

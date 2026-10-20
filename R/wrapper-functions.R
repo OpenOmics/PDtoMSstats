@@ -39,7 +39,8 @@ pdt_option_spec <- function() {
   boolean_options <- c(
     "dry-run", "non-interactive", "gsea", "no-gsea",
     "remove-few-measurements", "keep-few-measurements",
-    "file-name-from-file-id", "bioreplicate-from-file-id", "help"
+    "file-name-from-file-id", "bioreplicate-from-file-id",
+    "with-dependencies", "help"
   )
   list(values = value_options, booleans = boolean_options)
 }
@@ -388,6 +389,30 @@ pdt_resolve_outputs <- function(options, interactive_allowed) {
     )
   }
   outputs
+}
+
+pdt_plan_main_analysis <- function(outputs, analysis_file,
+                                   with_dependencies = FALSE) {
+  dependent_outputs <- intersect(outputs, c("excel", "timecourse"))
+  main_analysis_requested <- "html" %in% outputs
+  missing_analysis_dependency <- length(dependent_outputs) > 0L &&
+    !file.exists(analysis_file)
+  run_main_analysis <- main_analysis_requested ||
+    (isTRUE(with_dependencies) && missing_analysis_dependency)
+
+  if (missing_analysis_dependency && !run_main_analysis) {
+    stop(
+      "Requested ", paste(dependent_outputs, collapse = " and "),
+      " output requires the existing main-analysis file: ", analysis_file,
+      ". Run --outputs html first or add --with-dependencies.",
+      call. = FALSE
+    )
+  }
+
+  list(
+    run = run_main_analysis,
+    action = if (run_main_analysis) "run" else "reuse"
+  )
 }
 
 pdt_read_config <- function(path, base_dir) {

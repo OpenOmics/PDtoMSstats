@@ -1,316 +1,242 @@
-# Running on HPC with SingularityCE or Apptainer
+# HPC with Apptainer and Slurm
 
-PDtoMSstats can run on an HPC system without Docker. SingularityCE and
-Apptainer can convert the published OCI image to an immutable Singularity
-Image Format (`.sif`) file. The R reports and helper scripts do not change.
+PDtoMSstats has a host-side launcher for standardized HPC projects. The
+launcher applies the container isolation, bind mounts, group permissions,
+temporary directory, and Slurm settings; the scientific R scripts remain the
+same as Docker and native execution.
 
-Commands in this guide use `singularity`. If the HPC system provides
-`apptainer`, replace only the command name. Ask the HPC support team which
-module, scheduler settings, storage locations, and usage policies apply at the
-site.
+This guide uses the supplied NIH Biowulf profile. Other sites can copy
+`config/profiles/biowulf.yml` and change only site-specific execution values.
 
-## Overview
+## One-time group installation
 
-The normal HPC workflow is:
-
-1. clone the PDtoMSstats source repository;
-2. pull the released container to a `.sif` file once;
-3. place private inputs under the ignored `data` directory;
-4. validate the inputs on an allocated compute node;
-5. submit the analysis as an interactive or batch job;
-6. read the results from the host `results` and `figures` directories.
-
-Do not run a full analysis on a shared login node unless local policy allows
-it. Pulling the image and editing configurations are normally appropriate on a
-login or transfer node.
-
-## Check the HPC software
+Clone the workflow into the shared production directory and select a reviewed
+commit or release:
 
 ```bash
-module avail singularity apptainer
-module load singularity
-singularity --version
-```
-
-The exact module name is site-specific. If `singularity` is unavailable after
-loading the module, try `apptainer --version`.
-
-## Clone the repository
-
-```bash
+cd /data/Proteomics_IDSS/prod
 git clone https://github.com/OpenOmics/PDtoMSstats.git
 cd PDtoMSstats
+git rev-parse --short HEAD
 ```
 
-For a private repository, use the Git authentication method approved by the
-organization and HPC administrators. Do not save a password or access token in
-the repository.
+For production, record the printed commit and use the reviewed commit or tag
+chosen by the group. Do not assume that a moving branch will remain unchanged.
 
-## Pull the released image
-
-Choose a container location with adequate quota. The image can be shared by
-multiple analyses and does not need to be copied into every project.
+Load Apptainer and pull the matching released container once:
 
 ```bash
-mkdir -p containers
+module load apptainer/1.4.5
+apptainer --version
 
-singularity pull \
-  containers/pdtomsstats_0.1.2.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.1.2
+mkdir -p /data/Proteomics_IDSS/SIFs
+apptainer pull \
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.0.sif \
+  docker://ghcr.io/openomics/pdtomsstats:0.2.0
 ```
 
-Pulling converts the multi-platform GitHub Container Registry image to a SIF
-for the HPC system's architecture. Compute nodes often lack internet access,
-so complete this step before submitting the job.
-
-If the home-directory quota is small, put the Singularity cache in scratch
-storage before pulling:
+Verify the installed image:
 
 ```bash
-export SINGULARITY_CACHEDIR="/path/to/scratch/$USER/singularity-cache"
-mkdir -p "$SINGULARITY_CACHEDIR"
-```
-
-For Apptainer, use `APPTAINER_CACHEDIR` instead.
-
-### Private GHCR package
-
-If the container package is private, authenticate before pulling:
-
-```bash
-singularity registry login \
-  --username YOUR_GITHUB_USERNAME \
-  docker://ghcr.io
-```
-
-Enter a GitHub personal access token with `read:packages` permission when
-prompted. Never include the token in a shell script, Slurm file, YAML
-configuration, or Git commit.
-
-Some older Singularity versions use an interactive pull instead:
-
-```bash
-singularity pull --docker-login \
-  containers/pdtomsstats_0.1.2.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.1.2
-```
-
-The official documentation explains
-[OCI image conversion](https://docs.sylabs.io/guides/latest/user-guide/singularity_and_docker.html)
-and [registry authentication](https://docs.sylabs.io/guides/latest/user-guide/registry.html).
-
-## Prepare the project
-
-Follow the [getting-started guide](getting-started.md) to place inputs under
-`data/<project>/` and copy `config/example.yml` to a local configuration. Use
-relative paths with forward slashes in YAML.
-
-The repository is explicitly mounted at `/workspace` in the examples below.
-This reproduces the Docker Compose layout and makes host inputs and outputs
-available inside the container.
-
-## Check the container environment
-
-From the repository root:
-
-```bash
-singularity exec \
-  --cleanenv \
-  --bind "$PWD:/workspace" \
-  --pwd /workspace \
-  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.2.sif \
+apptainer exec --containall --cleanenv \
+  --bind /data/Proteomics_IDSS/prod/PDtoMSstats:/opt/PDtoMSstats:ro \
+  --pwd /opt/PDtoMSstats \
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.0.sif \
   Rscript scripts/check_environment.R
 ```
 
-The command should finish with `PDtoMSstats environment check: PASS`.
+The final line should be `PDtoMSstats environment check: PASS`.
 
-The options have these purposes:
-
-| Option | Purpose |
-|---|---|
-| `--cleanenv` | Prevent host R settings and libraries from changing the container environment |
-| `--bind` | Make the project directory available at `/workspace` with normal user write permissions |
-| `--pwd` | Run commands from the project root inside the container |
-| `--env HOME=/tmp` | Give R and Quarto a writable temporary home |
-| thread variables | Prevent BLAS libraries from consuming unrequested CPU cores |
-
-See the official [Apptainer execution reference](https://apptainer.org/docs/user/latest/cli/apptainer_exec.html)
-for equivalent options.
-
-## Interactive analysis
-
-First request a compute allocation. A typical Slurm request is:
+## Create a project
 
 ```bash
-srun --pty \
-  --cpus-per-task=2 \
-  --mem=32G \
-  --time=04:00:00 \
-  bash
+PDT=/data/Proteomics_IDSS/prod/PDtoMSstats/pdtomsstats
+PROJECT=/data/Proteomics_IDSS/projects/my-project
+
+"$PDT" init \
+  --project "$PROJECT" \
+  --profile biowulf \
+  --modules main,timecourse \
+  --label "My proteomics project"
 ```
 
-The correct partition, account, and resource limits depend on the HPC site.
-After the allocated shell opens, load Singularity and enter the repository:
+Copy the PSM, annotation, and optional Proteome Discoverer protein workbook to
+`$PROJECT/data/`. Edit the generated files under `$PROJECT/config/`. Keep
+contrast definitions in `config/`, because they are model configuration rather
+than raw input data.
+
+The generated project metadata remembers `biowulf`; subsequent commands do not
+need to repeat `--profile biowulf`.
+
+## Validate
 
 ```bash
-module load singularity
-cd /path/to/PDtoMSstats
+"$PDT" validate \
+  --project "$PROJECT" \
+  --config "$PROJECT/config/my-project-main.yml" \
+  --timecourse-config "$PROJECT/config/my-project-timecourse.yml" \
+  --outputs html,timecourse,excel \
+  --protein-workbook "$PROJECT/data/proteins.xlsx"
 ```
 
-Validate the inputs:
+Validation reads input headers and annotation, checks design choices, and
+writes resolved YAML without starting an analysis.
+
+## Run as a detached Slurm job
+
+The Biowulf profile sets `default_mode: slurm`. Like Cell-seek, plain
+`pdtomsstats run` writes a job script, submits it, and returns after `sbatch`
+accepts the job:
 
 ```bash
-singularity exec \
-  --cleanenv \
-  --bind "$PWD:/workspace" \
-  --pwd /workspace \
-  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.2.sif \
-  Rscript scripts/check_inputs.R config/local-my-project.yml
+"$PDT" run \
+  --project "$PROJECT" \
+  --config "$PROJECT/config/my-project-main.yml" \
+  --timecourse-config "$PROJECT/config/my-project-timecourse.yml" \
+  --protein-workbook "$PROJECT/data/proteins.xlsx" \
+  --outputs html,timecourse,excel \
+  --cpus 2 \
+  --memory 64G \
+  --walltime 12:00:00
 ```
 
-Run the main MSstats analysis:
+Defaults may be omitted. They come from `config/profiles/biowulf.yml`. A
+submission writes the exact generated Slurm script to `logs/`, submits it, and
+records its job ID.
+
+`pdtomsstats run --mode slurm` requests the same behavior explicitly.
+`pdtomsstats submit` is retained as a descriptive alias.
+
+Monitor it with:
 
 ```bash
-singularity exec \
-  --cleanenv \
-  --bind "$PWD:/workspace" \
-  --pwd /workspace \
-  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.2.sif \
-  Rscript scripts/run_pipeline.R config/local-my-project.yml
+"$PDT" status --project "$PROJECT"
 ```
 
-The host `results` and `figures` directories receive the outputs.
+The command uses `squeue` for an active job and `sacct` after completion, then
+shows the latest log tail and generated HTML/XLSX files.
 
-## Optional maSigPro, limma-spline, and Mfuzz analysis
+## Run inside an interactive allocation
 
-Supplying a second YAML file is the time-course trigger:
+After obtaining an interactive allocation, override the profile default with
+`--mode local`:
 
 ```bash
-singularity exec \
-  --cleanenv \
-  --bind "$PWD:/workspace" \
-  --pwd /workspace \
-  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.2.sif \
-  Rscript scripts/run_pipeline.R \
-  config/local-my-project.yml \
-  config/local-my-project-timecourse.yml
+"$PDT" run \
+  --mode local \
+  --project "$PROJECT" \
+  --config "$PROJECT/config/my-project-main.yml" \
+  --outputs html
 ```
 
-With only the main configuration, the workflow stops after MSstats. See the
-[time-course guide](timecourse.md) for design assumptions and interpretation.
+Do not run a full analysis on a shared login node unless site policy explicitly
+allows it.
 
-## Optional formatted workbook
+## Run individual outputs
 
-After the main report finishes:
+Main HTML report:
 
 ```bash
-singularity exec \
-  --cleanenv \
-  --bind "$PWD:/workspace" \
-  --pwd /workspace \
-  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  containers/pdtomsstats_0.1.2.sif \
-  Rscript scripts/export_workbook.R \
-  data/my-project/proteins.xlsx \
-  results/my-project
+"$PDT" run --project "$PROJECT" \
+  --config "$PROJECT/config/my-project-main.yml" \
+  --outputs html
 ```
 
-## Slurm batch job
-
-Save this as `run-pdtomsstats.slurm` and replace the paths and Slurm resources:
+Excel workbook after the main report exists:
 
 ```bash
-#!/bin/bash
-#SBATCH --job-name=pdtomsstats
-#SBATCH --cpus-per-task=2
-#SBATCH --mem=32G
-#SBATCH --time=08:00:00
-#SBATCH --output=pdtomsstats-%j.out
-
-set -euo pipefail
-
-module load singularity
-
-PROJECT_DIR="/path/to/PDtoMSstats"
-IMAGE="/path/to/containers/pdtomsstats_0.1.2.sif"
-MAIN_CONFIG="config/local-my-project.yml"
-
-cd "$PROJECT_DIR"
-
-singularity exec \
-  --cleanenv \
-  --bind "$PROJECT_DIR:/workspace" \
-  --pwd /workspace \
-  --env HOME=/tmp,OMP_NUM_THREADS=1,OPENBLAS_NUM_THREADS=1,MKL_NUM_THREADS=1 \
-  "$IMAGE" \
-  Rscript scripts/run_pipeline.R "$MAIN_CONFIG"
+"$PDT" run --project "$PROJECT" \
+  --config "$PROJECT/config/my-project-main.yml" \
+  --protein-workbook "$PROJECT/data/proteins.xlsx" \
+  --outputs excel
 ```
 
-Submit it with:
+Time-course report after the main report exists:
 
 ```bash
-sbatch run-pdtomsstats.slurm
+"$PDT" run --project "$PROJECT" \
+  --config "$PROJECT/config/my-project-main.yml" \
+  --timecourse-config "$PROJECT/config/my-project-timecourse.yml" \
+  --outputs timecourse
 ```
 
-To include the time-course stage, add:
+The Excel and time-course stages reuse
+`results/msstats_workbook_export_objects.rds`. If it does not exist, the
+launcher stops. Add `--with-dependencies` when the main analysis should be
+generated automatically first.
+
+## Home-directory isolation
+
+The Biowulf profile makes `--containall` and `--cleanenv` mandatory by default.
+Apptainer therefore creates an isolated container home rather than binding the
+host home. The launcher binds only:
+
+- the workflow read-only at `/opt/PDtoMSstats`;
+- the selected project at its absolute path;
+- job scratch at `/jobtmp`.
+
+It deliberately does not pass `HOME=/tmp`, and removes inherited
+`APPTAINERENV_HOME` and `SINGULARITYENV_HOME` variables. The image cannot set
+mount policy itself because mounts are established by Apptainer before the
+container command starts.
+
+The launcher also uses the selected job scratch as `APPTAINER_TMPDIR` and
+removes the legacy `SINGULARITY_TMPDIR`, avoiding conflicting temporary-
+directory settings.
+
+The launcher does not create, remove, or alter host filesystem symlinks. A
+root-owned symlink under a shared filesystem is outside the R analysis and
+should be reviewed by the HPC storage administrators.
+
+## Group access
+
+Initialization uses group `Proteomics_IDSS`, setgid directories, group
+read/write/execute permissions, default ACLs when supported, and `umask 0007`.
+To correct permissions on files that existed before initialization:
 
 ```bash
-TIMECOURSE_CONFIG="config/local-my-project-timecourse.yml"
+chgrp -R Proteomics_IDSS "$PROJECT"
+chmod -R g+rwX,o-rwx "$PROJECT"
+find "$PROJECT" -type d -exec chmod g+s {} +
+find "$PROJECT" -type d -exec \
+  setfacl -m d:g:Proteomics_IDSS:rwx,d:m::rwx,d:o::--- {} +
 ```
 
-and change the final command arguments to:
+## Resource and version checks
+
+`number_of_cores` in the main YAML must not exceed Slurm `--cpus`. Large PSM
+tables and formatted workbooks can need substantially more memory than small
+test datasets. Check completed jobs with `sacct` and adjust future requests.
+
+Record the installation pairing with:
 
 ```bash
-Rscript scripts/run_pipeline.R "$MAIN_CONFIG" "$TIMECOURSE_CONFIG"
+"$PDT" version --project "$PROJECT"
 ```
 
-## Resource settings
+The output reports the workflow version and Git commit alongside the profile,
+runtime, and SIF. A production release should publish the workflow tag and
+container image together.
 
-- `number_of_cores` in the main YAML must not exceed Slurm
-  `--cpus-per-task`.
-- Start with 32 GB memory for a moderate study and adjust based on PSM table
-  size and observed peak usage.
-- Request enough wall time for the main report and optional time-course stage.
-- Store the SIF and input files on storage visible from compute nodes.
-- Use job-local scratch for caches when recommended by the HPC administrators.
+## Common errors
 
-For the most reproducible comparison with previous results, keep
-`number_of_cores: 1` and request at least one CPU.
+### SIF not found
 
-## Common problems
+Check the `image` path in `config/profiles/biowulf.yml`, or override it for one
+run with `--image /absolute/path/image.sif`.
 
-### The image cannot be pulled
+### Apptainer is unavailable
 
-The package may be private, the login token may lack `read:packages`, or the
-login node may not have external network access. Authenticate on a permitted
-transfer node or ask HPC support to mirror the SIF to shared storage.
+Load the module named in the profile. The launcher attempts this automatically,
+but a cluster may require its module initialization in the login shell.
 
-### A path is missing inside the container
+### Permission denied
 
-Run from the repository root and confirm that the bind source is correct:
+Check group membership with `id`, inspect the parent directory permissions,
+and apply the group-access correction above. The submitter must be able to
+write `logs/`, `results/`, and `tmp/`.
 
-```bash
-pwd
-singularity exec --bind "$PWD:/workspace" \
-  containers/pdtomsstats_0.1.2.sif ls /workspace
-```
+### Job is killed
 
-### Permission denied while writing results
-
-Confirm that the host repository, `results`, and `figures` directories are
-writable. Singularity normally writes as the submitting user rather than as
-root.
-
-### The job is killed
-
-Check the scheduler accounting record. An out-of-memory termination requires a
-larger `--mem` request; a timeout requires a longer `--time` request.
-
-### The `--env` option is unavailable
-
-Very old Singularity versions may require `SINGULARITYENV_` variables. Ask HPC
-support whether a newer module is available before adapting the command.
+Use `sacct` or `pdtomsstats status`. Increase `--memory` for an out-of-memory
+state or `--walltime` for a timeout.

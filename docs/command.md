@@ -1,8 +1,12 @@
-# Run PDtoMSstats with one command
+# PDtoMSstats commands
 
-The `pdtomsstats` wrapper collects the input choices, writes resolved YAML
-files, validates the design, and runs the requested outputs. It uses the same
-generalized analysis and workbook functions as the individual scripts.
+The top-level `pdtomsstats` launcher standardizes project creation, validation,
+local/container execution, Slurm submission, status, and provenance. It calls
+the same generalized analysis and workbook functions as the individual
+scripts; the command layer does not change the scientific models.
+
+See [standardized projects](standardized-projects.md) for `init`, `validate`,
+`submit`, `status`, execution profiles, and the standard directory layout.
 
 ## Interactive wizard
 
@@ -62,6 +66,20 @@ combined in any order:
 The full formatted Excel workbook requires the Proteome Discoverer protein
 workbook. The core CSV and RDS analysis products are always saved because the
 requested outputs depend on them.
+
+When `html` is requested, the main analysis runs and refreshes its report and
+analysis RDS. An `excel`-only or `timecourse`-only run reuses the existing
+`msstats_workbook_export_objects.rds`; it does not silently rerun the main
+analysis. If that file is absent, first run `--outputs html`, or explicitly add
+`--with-dependencies` to create the missing prerequisite.
+
+```bash
+./pdtomsstats run \
+  --config config/local-my-project.yml \
+  --timecourse-config config/local-my-project-timecourse.yml \
+  --outputs timecourse \
+  --with-dependencies
+```
 
 ### Set Excel differential-expression thresholds
 

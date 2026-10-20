@@ -8,6 +8,7 @@ repo_root <- normalizePath(
 
 required_files <- c(
   "README.md",
+  "VERSION",
   "pdtomsstats",
   "pdtomsstats.ps1",
   "Dockerfile",
@@ -20,6 +21,10 @@ required_files <- c(
   "config/example-data.yml",
   "config/example-data-timecourse.yml",
   "config/timecourse-example.yml",
+  "config/profiles/biowulf.yml",
+  "config/templates/main.yml",
+  "config/templates/timecourse.yml",
+  "config/templates/contrasts.tsv",
   "data/example/psm.csv",
   "data/example/annotation.csv",
   "data/example/contrasts.tsv",
@@ -31,6 +36,7 @@ required_files <- c(
   "docs/hpc-singularity.md",
   "docs/index.md",
   "docs/installation.md",
+  "docs/standardized-projects.md",
   "docs/timecourse.md",
   "docs/_quarto.yml",
   "docs/styles.css",
@@ -55,11 +61,44 @@ required_files <- c(
   "scripts/export_workbook.R",
   "scripts/export_msstats_workbook.R",
   "scripts/calculate_unnormalized_msstats_protein_abundance.R",
-  "tests/test_workbook_dimensions.R"
+  "tests/test_workbook_dimensions.R",
+  "tests/test_cli.sh"
 )
 missing_files <- required_files[!file.exists(file.path(repo_root, required_files))]
 if (length(missing_files)) {
   stop("Missing repository file(s): ", paste(missing_files, collapse = ", "), call. = FALSE)
+}
+
+version <- trimws(readLines(file.path(repo_root, "VERSION"), warn = FALSE)[[1]])
+description <- read.dcf(file.path(repo_root, "DESCRIPTION"))
+if (!identical(version, unname(description[[1, "Version"]]))) {
+  stop("VERSION and DESCRIPTION Version must match.", call. = FALSE)
+}
+
+yaml_files <- c(
+  "config/profiles/biowulf.yml",
+  "config/templates/main.yml",
+  "config/templates/timecourse.yml"
+)
+for (yaml_file in yaml_files) {
+  parsed_yaml <- yaml::read_yaml(file.path(repo_root, yaml_file))
+  if (!is.list(parsed_yaml)) {
+    stop("Expected a YAML mapping in ", yaml_file, ".", call. = FALSE)
+  }
+}
+biowulf_profile <- yaml::read_yaml(
+  file.path(repo_root, "config/profiles/biowulf.yml")
+)
+if (!isTRUE(biowulf_profile$containall) ||
+    !grepl(paste0("_", version, "[.]sif$"), biowulf_profile$image)) {
+  stop("The Biowulf profile must isolate HOME and match VERSION.", call. = FALSE)
+}
+
+launcher <- readLines(file.path(repo_root, "pdtomsstats"), warn = FALSE)
+for (text in c("--containall", "init", "validate", "submit", "status")) {
+  if (!any(grepl(text, launcher, fixed = TRUE))) {
+    stop("The standardized launcher is missing expected text: ", text, call. = FALSE)
+  }
 }
 
 r_files <- list.files(repo_root, pattern = "[.]R$", recursive = TRUE, full.names = TRUE)
@@ -173,7 +212,7 @@ export_script <- readLines(
 required_export_text <- c(
   "protein_candidate_rows",
   "prepare_excel_data",
-  "repair_worksheet_dimensions(wb)",
+  "repair_worksheet_dimensions(wb",
   "protein_sheet <- \"Proteins\"",
   "main_sheet <- \"Peptide\"",
   "topLeftCell=\\\"E2\\\"",

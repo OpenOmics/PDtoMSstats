@@ -1,0 +1,27 @@
+# PDtoMSstats independent-sample time-course template.
+analysis_file: "__PROJECT_DIR__/results/msstats_workbook_export_objects.rds"
+request: "__REQUEST__-timecourse"
+report_label: "__REPORT_LABEL__ time-course analysis"
+output_dir: "__PROJECT_DIR__/results/timecourse"
+figures_dir: "__PROJECT_DIR__/results/figures/timecourse"
+
+# Replace these values with annotation column/value names.
+time_column: "REPLACE_TIME_COLUMN"
+group_column: "REPLACE_GROUP_COLUMN"
+reference_group: "REPLACE_REFERENCE_GROUP"
+comparison_group: "REPLACE_COMPARISON_GROUP"
+
+time_unit: 24
+min_replicates_per_cell: 4
+polynomial_degree: 3
+spline_df: 3
+model_fdr: 0.05
+limma_interaction_fdr: 0.05
+coefficient_alpha: 0.05
+min_r_squared: 0.60
+min_clusters: 2
+max_clusters: 10
+cluster_diagnostic_repeats: 20
+core_membership: 0.70
+random_seed: 20261007
+extra_qmd: null
