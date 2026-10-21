@@ -19,8 +19,12 @@ An explicit output filename can be supplied as a third argument:
 Rscript scripts/export_workbook.R \
   data/my-project-protein.xlsx \
   results/my-project \
-  results/my-project/my-project-protein-MSstats.xlsx
+  results/my-project/main/my-project-protein-MSstats.xlsx
 ```
+
+Without the third argument, the workbook is written to
+`results/my-project/main/` beside the main HTML report. The analysis objects
+read by the exporter remain directly under `results/my-project/`.
 
 The wrapper:
 

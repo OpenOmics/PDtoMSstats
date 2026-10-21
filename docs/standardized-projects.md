@@ -110,6 +110,25 @@ execution profile, Docker runs locally.
 that a supposedly downstream-only run cannot silently repeat a large main
 analysis. Add `--with-dependencies` to generate that missing prerequisite.
 
+After a complete run, the results are organized as:
+
+```text
+results/
+├── main/
+│   ├── my-project.html
+│   ├── my-project-timecourse.html
+│   └── proteins_MSstats.xlsx
+├── timecourse/
+│   └── time-course CSV/RDS/YAML files
+├── msstats_workbook_export_objects.rds
+├── main-analysis CSV/RDS files
+├── pdtomsstats-resolved.yml
+└── pdtomsstats-run.yml
+```
+
+An explicit `--excel-output` path is still honored instead of the default
+`main/` location.
+
 ## Submit and monitor
 
 ```bash

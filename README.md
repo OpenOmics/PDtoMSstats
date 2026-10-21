@@ -74,7 +74,9 @@ Run the bundled de-identified example with one noninteractive command:
   --non-interactive
 ```
 
-Outputs appear on the host under `results/example/` and figures under
+Both HTML reports appear under `results/example/main/`. Supporting main-analysis
+files remain directly under `results/example/`, time-course CSV/RDS files stay
+under `results/example/timecourse/`, and figures are written under
 `figures/example/`. The example contains synthetic identifiers and is intended
 only to verify the software.
 
@@ -199,8 +201,9 @@ docker compose run --rm pdtomsstats \
 The exporter uses only R packages, including `openxlsx2` when a Proteome
 Discoverer workbook needs compatibility repair. The result contains a compact
 `Proteins` worksheet and a complete hierarchical `Peptide` worksheet;
-non-finite statistics are shown as `NA`, `Inf`, or `-Inf`. Details are in the
-[workbook export guide](docs/workbook-export.md).
+non-finite statistics are shown as `NA`, `Inf`, or `-Inf`. By default, the
+workbook is saved beside the main HTML report under `results/my-project/main/`.
+Details are in the [workbook export guide](docs/workbook-export.md).
 
 ## Native installation
 

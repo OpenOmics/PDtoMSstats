@@ -27,7 +27,7 @@ the repository root.
 | `condition_columns` | Annotation columns used to construct `Condition` | `null` |
 | `condition_template` | Optional template using names such as `{Time}` | `null` |
 | `condition_separator` | Joiner used when no template is supplied | `_` |
-| `output_dir` | HTML, CSV, and RDS destination | `results/msstats-report` |
+| `output_dir` | Analysis-results root; HTML reports/default XLSX go in its `main/` subdirectory | `results/msstats-report` |
 | `figures_dir` | Figure destination | `figures/msstats-report` |
 | `excluded_runs` | Optional list of `File ID` values to remove | `null` |
 | `max_psm_rows` | Optional row limit for development tests only | `null` |

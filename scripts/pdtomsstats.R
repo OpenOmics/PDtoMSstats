@@ -184,6 +184,29 @@ if ("timecourse" %in% outputs) {
 }
 
 dir.create(main_config$output_dir, recursive = TRUE, showWarnings = FALSE)
+main_output_dir <- pdt_main_output_dir(main_config$output_dir)
+if (any(c("html", "excel") %in% outputs)) {
+  dir.create(main_output_dir, recursive = TRUE, showWarnings = FALSE)
+}
+main_html_output <- if ("html" %in% outputs) {
+  file.path(main_output_dir, paste0(main_config$request, ".html"))
+} else {
+  NULL
+}
+timecourse_html_output <- if (!is.null(timecourse_config)) {
+  file.path(main_output_dir, paste0(timecourse_config$request, ".html"))
+} else {
+  NULL
+}
+workbook_file <- if ("excel" %in% outputs) {
+  if (pdt_is_set(excel_output)) {
+    excel_output
+  } else {
+    pdt_default_workbook_output(main_config$output_dir, protein_workbook)
+  }
+} else {
+  NULL
+}
 main_config_file <- pdt_write_config(
   main_config,
   file.path(main_config$output_dir, "pdtomsstats-resolved.yml")
@@ -219,10 +242,13 @@ run_manifest <- list(
   with_dependencies = isTRUE(parsed$options$with_dependencies),
   main_analysis_action = main_analysis_action,
   analysis_file = analysis_file,
+  main_output_dir = main_output_dir,
+  main_html_output = main_html_output,
+  timecourse_html_output = timecourse_html_output,
   main_config = main_config_file,
   timecourse_config = timecourse_config_file,
   protein_workbook = protein_workbook,
-  excel_output = excel_output,
+  excel_output = workbook_file,
   workflow_version = environment_value("PDTOMSSTATS_WORKFLOW_VERSION"),
   workflow_commit = environment_value("PDTOMSSTATS_WORKFLOW_COMMIT"),
   container_image = environment_value("PDTOMSSTATS_CONTAINER_IMAGE"),
@@ -286,7 +312,7 @@ if (run_main_analysis) {
   } else {
     paste0(main_config$request, "-analysis-intermediate.html")
   }
-  main_html_file <- file.path(main_config$output_dir, main_html_name)
+  main_html_file <- file.path(main_output_dir, main_html_name)
   run_step(
     "MSstats analysis",
     "render_report.R",
@@ -300,9 +326,7 @@ if (run_main_analysis) {
 timecourse_html_file <- NULL
 if ("timecourse" %in% outputs) {
   timecourse_html_name <- paste0(timecourse_config$request, ".html")
-  timecourse_html_file <- file.path(
-    timecourse_config$output_dir, timecourse_html_name
-  )
+  timecourse_html_file <- timecourse_html_output
   run_step(
     "maSigPro, limma-spline, and Mfuzz time-course analysis",
     "render_timecourse_report.R",
@@ -314,19 +338,7 @@ if ("timecourse" %in% outputs) {
 # Proteome Discoverer workbooks can require substantially more memory than the
 # reports, and an Excel resource failure should not prevent a requested
 # time-course analysis from being produced.
-workbook_file <- NULL
 if ("excel" %in% outputs) {
-  workbook_file <- if (pdt_is_set(excel_output)) {
-    excel_output
-  } else {
-    file.path(
-      main_config$output_dir,
-      paste0(
-        tools::file_path_sans_ext(basename(protein_workbook)),
-        "_MSstats.xlsx"
-      )
-    )
-  }
   workbook_job_file <- tempfile(pattern = "pdt-workbook-", fileext = ".yml")
   yaml::write_yaml(
     list(

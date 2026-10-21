@@ -37,9 +37,14 @@ resolve_repo_path <- function(path) {
   if (grepl("^(/|[A-Za-z]:[/\\\\])", path)) path else file.path(repo_root, path)
 }
 
-output_dir <- resolve_repo_path(config$output_dir)
-dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-output_dir <- normalizePath(output_dir, winslash = "/", mustWork = TRUE)
+results_dir <- resolve_repo_path(config$output_dir)
+dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
+results_dir <- normalizePath(results_dir, winslash = "/", mustWork = TRUE)
+report_output_dir <- file.path(results_dir, "main")
+dir.create(report_output_dir, recursive = TRUE, showWarnings = FALSE)
+report_output_dir <- normalizePath(
+  report_output_dir, winslash = "/", mustWork = TRUE
+)
 
 default_output_name <- paste0(
   gsub("[^A-Za-z0-9._-]+", "-", config$request),
@@ -111,7 +116,7 @@ if (!file.exists(rendered_file)) {
   stop("Quarto finished but the expected HTML file was not found: ", rendered_file, call. = FALSE)
 }
 
-final_file <- file.path(output_dir, output_name)
+final_file <- file.path(report_output_dir, output_name)
 if (normalizePath(rendered_file, winslash = "/", mustWork = TRUE) !=
     normalizePath(final_file, winslash = "/", mustWork = FALSE)) {
   copied <- file.copy(rendered_file, final_file, overwrite = TRUE)
@@ -122,4 +127,4 @@ if (normalizePath(rendered_file, winslash = "/", mustWork = TRUE) !=
 }
 
 cat("Report:", normalizePath(final_file, winslash = "/", mustWork = TRUE), "\n")
-cat("Results:", output_dir, "\n")
+cat("Results:", results_dir, "\n")

@@ -19,6 +19,16 @@ source(file.path(repo_root, "R", "wrapper-functions.R"))
 
 stopifnot(identical(pdt_main_defaults()$gsea_pvalue_cutoff, 0.05))
 stopifnot(identical(pdt_main_defaults()$maximum_allowed_fold_change, 100))
+stopifnot(
+  identical(
+    pdt_main_output_dir("results/project"),
+    file.path("results/project", "main")
+  ),
+  identical(
+    pdt_default_workbook_output("results/project", "/input/Proteins.xlsx"),
+    file.path("results/project", "main", "Proteins_MSstats.xlsx")
+  )
+)
 
 parsed <- pdt_parse_cli(c(
   "run",

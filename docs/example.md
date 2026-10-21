@@ -43,14 +43,14 @@ docker compose run --rm pdtomsstats \
 
 The main outputs include:
 
-- `results/example/deidentified-example.html`;
+- `results/example/main/deidentified-example.html`;
 - `results/example/msstats_all_group_comparisons.csv`;
 - one CSV for each planned comparison;
 - `results/example/msstats_workbook_export_objects.rds`.
 
 The time-course outputs include:
 
-- `results/example/timecourse/deidentified-example-timecourse.html`;
+- `results/example/main/deidentified-example-timecourse.html`;
 - `masigpro_model_results.csv`;
 - `masigpro_significant_proteins_by_variable.csv`;
 - `mfuzz_cluster_membership.csv`;

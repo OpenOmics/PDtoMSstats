@@ -67,6 +67,11 @@ The full formatted Excel workbook requires the Proteome Discoverer protein
 workbook. The core CSV and RDS analysis products are always saved because the
 requested outputs depend on them.
 
+The main and time-course HTML reports and default formatted workbook are
+grouped under the configured results directory's `main/` subdirectory.
+Supporting main-analysis CSV/RDS/YAML files remain in the results root, and
+time-course supporting files remain under `timecourse/`.
+
 When `html` is requested, the main analysis runs and refreshes its report and
 analysis RDS. An `excel`-only or `timecourse`-only run reuses the existing
 `msstats_workbook_export_objects.rds`; it does not silently rerun the main

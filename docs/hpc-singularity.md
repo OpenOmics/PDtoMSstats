@@ -123,6 +123,11 @@ Monitor it with:
 The command uses `squeue` for an active job and `sacct` after completion, then
 shows the latest log tail and generated HTML/XLSX files.
 
+Completed user-facing files are grouped under `results/main/`: both HTML
+reports and the formatted Excel workbook. Supporting main-analysis CSV/RDS/YAML
+files remain directly under `results/`, including the RDS reused by downstream
+stages. Time-course supporting files remain under `results/timecourse/`.
+
 ## Run inside an interactive allocation
 
 After obtaining an interactive allocation, override the profile default with

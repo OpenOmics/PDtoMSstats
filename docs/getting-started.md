@@ -123,9 +123,9 @@ Successful completion ends with:
 PDtoMSstats pipeline completed successfully.
 ```
 
-Open `results/example/deidentified-example.html` in a web browser. The CSV
-tables are in the same folder, and the separate figures are under
-`figures/example`.
+Open `results/example/main/deidentified-example.html` in a web browser. The CSV
+tables are one level up under `results/example/`, and the separate figures are
+under `figures/example`.
 
 The example contains synthetic identifiers and must not be used for biological
 interpretation.
@@ -249,9 +249,9 @@ This runs validation, quality control, MSstats summarization and comparisons,
 pathway analysis when enabled, and the HTML report. It does not run the
 time-course stage unless a second configuration file is supplied.
 
-The main outputs appear in the configured `results/my-project` folder:
+The main outputs appear under the configured `results/my-project` folder:
 
-- a self-contained HTML report;
+- `main/my-project.html`, the self-contained HTML report;
 - `msstats_all_group_comparisons.csv`;
 - one CSV per planned comparison;
 - a plain-language contrast guide;
@@ -269,8 +269,8 @@ run this after the main report:
 docker compose run --rm pdtomsstats Rscript scripts/export_workbook.R data/my-project/my-protein-file.xlsx results/my-project
 ```
 
-The formatted workbook is saved in `results/my-project`. The source workbook
-is not changed. More detail is available in
+The formatted workbook is saved in `results/my-project/main`. The source
+workbook is not changed. More detail is available in
 [the workbook export guide](workbook-export.md).
 
 ## 11. Optional time-course analysis

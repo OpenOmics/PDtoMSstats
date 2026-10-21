@@ -7,6 +7,20 @@ pdt_is_set <- function(value) {
     any(!is.na(value) & nzchar(trimws(as.character(value))))
 }
 
+pdt_main_output_dir <- function(output_dir) {
+  file.path(as.character(output_dir)[[1L]], "main")
+}
+
+pdt_default_workbook_output <- function(output_dir, protein_workbook) {
+  file.path(
+    pdt_main_output_dir(output_dir),
+    paste0(
+      tools::file_path_sans_ext(basename(protein_workbook)),
+      "_MSstats.xlsx"
+    )
+  )
+}
+
 pdt_split_values <- function(value) {
   if (!pdt_is_set(value)) return(character())
   values <- unlist(strsplit(as.character(value), ",", fixed = TRUE), use.names = FALSE)

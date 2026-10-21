@@ -106,6 +106,10 @@ not change the fitted orthogonal-polynomial or natural-spline model space.
   ordinary in-document JavaScript and SVG so it works when the standalone HTML
   is opened directly from disk without a server.
 
+The HTML report is written under the main analysis root's `main/` directory.
+The time-course CSV, RDS, and resolved YAML files remain in the configured
+time-course `output_dir`.
+
 ## Important settings
 
 | Setting | Purpose |

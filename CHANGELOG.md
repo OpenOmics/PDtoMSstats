@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Grouped the main and time-course HTML reports and default formatted Excel
+  workbook under a `main/` subdirectory of the configured results directory
+  while retaining supporting analysis files in the results root and
+  time-course supporting outputs in `timecourse/`.
+
 ## 0.2.4 - 2026-10-21
 
 - Moved the time-course dashboard gene symbol into the selected-protein card

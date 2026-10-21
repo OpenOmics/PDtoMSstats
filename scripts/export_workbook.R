@@ -63,7 +63,7 @@ if (!file.exists(objects_file)) {
 
 unnormalized_file <- file.path(results_dir, "msstats_unnormalized_protein_level.rds")
 default_output <- file.path(
-  results_dir,
+  results_dir, "main",
   paste0(tools::file_path_sans_ext(basename(protein_file)), "_MSstats.xlsx")
 )
 output_file <- if (job_mode && !is.null(job$output_file) &&
@@ -75,6 +75,7 @@ output_file <- if (job_mode && !is.null(job$output_file) &&
 } else {
   default_output
 }
+dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
 
 calculate_script <- file.path("scripts", "calculate_unnormalized_msstats_protein_abundance.R")
 export_script <- file.path("scripts", "export_msstats_workbook.R")
