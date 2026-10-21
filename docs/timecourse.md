@@ -48,10 +48,11 @@ protein_workbook: "data/my-project/proteins.xlsx"
 
 `protein_workbook` is optional for the statistical models. When supplied in
 the YAML or with `--protein-workbook`, the trajectory dashboard parses the
-`GN=` field from each Proteome Discoverer protein description and displays the
-gene symbol in a dedicated result card. Semicolon-separated protein groups
-show their unique symbols separated by `/`; proteins without a `GN=` value
-show `NA`.
+`GN=` field from each Proteome Discoverer protein description. The selected-
+protein dashboard card and protein-level HTML and CSV tables display the gene
+symbol beside the protein accession. Semicolon-separated protein groups show
+their unique symbols separated by `/`; proteins without a `GN=` value show
+`NA`.
 
 `time_unit` rescales time before trajectory fitting. Affine time rescaling does
 not change the fitted orthogonal-polynomial or natural-spline model space.
@@ -83,7 +84,8 @@ not change the fitted orthogonal-polynomial or natural-spline model space.
 
 - `timecourse_combined_significant_proteins.csv`: union of significant
   proteins, both models' statistics and coefficients, and the
-  `SignificanceCategory` method-agreement label.
+  `SignificanceCategory` method-agreement label. Protein-level output tables
+  include the workbook-derived `GeneSymbol` column when available.
 - `masigpro_model_results.csv` and `limma_spline_model_results.csv`: complete
   model-specific results for all tested proteins.
 - `mfuzz_method_parameter_comparison.csv`: side-by-side input counts,

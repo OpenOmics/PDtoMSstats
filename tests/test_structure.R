@@ -164,6 +164,9 @@ required_timecourse_text <- c(
   "trajectory-protein-search",
   "Gene symbol (GN)",
   "match_pd_gene_symbols",
+  "add_gene_symbols",
+  ".data$GeneSymbol",
+  "opts_knit$set(root.dir = report_dir)",
   "renderChart",
   "trajectory-card-grid"
 )

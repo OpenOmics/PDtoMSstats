@@ -157,14 +157,18 @@ suppressPackageStartupMessages({
 })
 
 current_input <- tryCatch(knitr::current_input(), error = function(e) NULL)
-report_source_dir <- Sys.getenv("PDTOMSSTATS_REPORT_SOURCE_DIR", unset = "")
-report_dir <- if (nzchar(report_source_dir)) {
-  normalizePath(report_source_dir, winslash = "/", mustWork = TRUE)
-} else if (!is.null(current_input) && nzchar(current_input)) {
+render_dir <- if (!is.null(current_input) && nzchar(current_input)) {
   dirname(normalizePath(current_input, winslash = "/", mustWork = TRUE))
 } else {
   normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
+report_source_dir <- Sys.getenv("PDTOMSSTATS_REPORT_SOURCE_DIR", unset = "")
+report_dir <- if (nzchar(report_source_dir)) {
+  normalizePath(report_source_dir, winslash = "/", mustWork = TRUE)
+} else {
+  render_dir
+}
+knitr::opts_knit$set(root.dir = report_dir)
 
 required_path <- function(value, parameter_name) {
   if (is.null(value) || length(value) != 1 || is.na(value) || !nzchar(value)) {
@@ -231,7 +235,7 @@ dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
 # absolute path outside this repository.
 report_figure_dir <- xfun::relative_path(
   normalizePath(figure_dir, winslash = "/", mustWork = TRUE),
-  dir = report_dir
+  dir = render_dir
 )
 knitr::opts_chunk$set(
   fig.path = file.path(report_figure_dir, paste0(params$request, "-")),

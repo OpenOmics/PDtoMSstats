@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Moved the time-course dashboard gene symbol into the selected-protein card
+  for a four-card row and added gene symbols to protein-level time-course HTML
+  and CSV tables.
+
 ## 0.2.3 - 2026-10-20
 
 - Render main and time-course Quarto reports from per-job writable staging

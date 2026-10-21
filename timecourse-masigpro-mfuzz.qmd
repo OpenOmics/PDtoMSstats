@@ -115,14 +115,18 @@ mfuzz_package_available <- suppressWarnings(tryCatch(
 ))
 
 current_input <- tryCatch(knitr::current_input(), error = function(e) NULL)
-report_source_dir <- Sys.getenv("PDTOMSSTATS_REPORT_SOURCE_DIR", unset = "")
-report_dir <- if (nzchar(report_source_dir)) {
-  normalizePath(report_source_dir, winslash = "/", mustWork = TRUE)
-} else if (!is.null(current_input) && nzchar(current_input)) {
+render_dir <- if (!is.null(current_input) && nzchar(current_input)) {
   dirname(normalizePath(current_input, winslash = "/", mustWork = TRUE))
 } else {
   normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
+report_source_dir <- Sys.getenv("PDTOMSSTATS_REPORT_SOURCE_DIR", unset = "")
+report_dir <- if (nzchar(report_source_dir)) {
+  normalizePath(report_source_dir, winslash = "/", mustWork = TRUE)
+} else {
+  render_dir
+}
+knitr::opts_knit$set(root.dir = report_dir)
 
 required_value <- function(value, parameter_name) {
   if (is.null(value) || length(value) != 1L || is.na(value) || !nzchar(value)) {
@@ -161,7 +165,7 @@ dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
 # supplied as an absolute path.
 report_figure_dir <- xfun::relative_path(
   normalizePath(figure_dir, winslash = "/", mustWork = TRUE),
-  dir = report_dir
+  dir = render_dir
 )
 knitr::opts_chunk$set(
   fig.path = file.path(report_figure_dir, paste0(params$request, "-")),
@@ -915,6 +919,21 @@ if (!is.null(protein_workbook)) {
   )
 }
 
+add_gene_symbols <- function(data) {
+  if (!"Protein" %in% names(data)) return(data)
+  data |>
+    select(-any_of("GeneSymbol")) |>
+    left_join(protein_gene_annotation, by = "Protein") |>
+    relocate(.data$GeneSymbol, .after = .data$Protein)
+}
+
+add_mfuzz_gene_symbols <- function(result) {
+  result$condition_summary <- add_gene_symbols(result$condition_summary)
+  result$effect_long <- add_gene_symbols(result$effect_long)
+  result$assignments <- add_gene_symbols(result$assignments)
+  result
+}
+
 duplicate_protein_runs <- protein_data |>
   count(.data$Protein, .data$Run, name = "Rows") |>
   filter(.data$Rows > 1L)
@@ -1275,6 +1294,20 @@ mfuzz_parameter_comparison <- bind_rows(
   limma_mfuzz$parameters
 )
 
+# Gene symbols are descriptive annotations and are joined only after all
+# statistical modeling and clustering are complete.
+protein_coverage <- add_gene_symbols(protein_coverage)
+masigpro_variable_significance <- add_gene_symbols(
+  masigpro_variable_significance
+)
+masigpro_results <- add_gene_symbols(masigpro_results)
+limma_results <- add_gene_symbols(limma_results)
+combined_significant_results <- add_gene_symbols(
+  combined_significant_results
+)
+masigpro_mfuzz <- add_mfuzz_gene_symbols(masigpro_mfuzz)
+limma_mfuzz <- add_mfuzz_gene_symbols(limma_mfuzz)
+
 union_trajectory_summary <- protein_data |>
   filter(.data$Protein %in% combined_significant_results$Protein) |>
   group_by(.data$Protein, .data$Time, .data$Group) |>
@@ -1305,6 +1338,7 @@ union_trajectory_summary <- protein_data |>
 combined_interpretation_results <- combined_significant_results |>
   transmute(
     Protein = .data$Protein,
+    GeneSymbol = .data$GeneSymbol,
     SignificanceCategory = .data$SignificanceCategory,
     maSigPro_AdjPValue = .data$maSigPro_OverallModelAdjustedPValue,
     maSigPro_RSquared = .data$maSigPro_ModelRSquared,
@@ -1809,6 +1843,7 @@ DT::datatable(
     filter(.data$DifferentialTimeInteraction) |>
     select(
       .data$Protein,
+      .data$GeneSymbol,
       .data$OverallModelAdjustedPValue,
       .data$ModelRSquared,
       .data$DifferentialTimeInteraction
@@ -1829,7 +1864,7 @@ DT::datatable(
 ```{r masigpro-result-columns, results='asis', echo=FALSE}
 column_guide(
   c(
-    "Protein", "OverallModelAdjustedPValue", "ModelRSquared",
+    "Protein", "GeneSymbol", "OverallModelAdjustedPValue", "ModelRSquared",
     "DifferentialTimeInteraction"
   ),
   "This compact table shows proteins entering the maSigPro-specific Mfuzz run. The complete maSigPro CSV contains the remaining term-level parameters."
@@ -1865,6 +1900,7 @@ DT::datatable(
     filter(.data$DifferentialTimeInteraction) |>
     select(
       .data$Protein,
+      .data$GeneSymbol,
       .data$InteractionAdjustedPValue,
       .data$InteractionF,
       .data$FullModelRSquared
@@ -1889,7 +1925,7 @@ DT::datatable(
 ```{r limma-result-columns, results='asis', echo=FALSE}
 column_guide(
   c(
-    "Protein", "InteractionAdjustedPValue", "InteractionF",
+    "Protein", "GeneSymbol", "InteractionAdjustedPValue", "InteractionF",
     "FullModelRSquared"
   ),
   "Selection is based on InteractionAdjustedPValue. The downloadable model CSV retains every coefficient and moderated t statistic."
@@ -2158,7 +2194,7 @@ DT::datatable(
     filter(.data$CoreMember) |>
     arrange(.data$Cluster, desc(.data$MaximumMembership)) |>
     select(
-      .data$Protein, .data$Cluster,
+      .data$Protein, .data$GeneSymbol, .data$Cluster,
       .data$MaximumMembership, .data$CoreMember
     ),
   rownames = FALSE,
@@ -2179,7 +2215,7 @@ DT::datatable(
 
 ```{r mfuzz-core-columns, results='asis', echo=FALSE}
 column_guide(
-  c("Protein", "Cluster", "MaximumMembership", "CoreMember"),
+  c("Protein", "GeneSymbol", "Cluster", "MaximumMembership", "CoreMember"),
   "The HTML shows the assigned cluster and maximum membership. Membership in every candidate cluster remains available in the downloadable membership CSV."
 )
 ```
@@ -2299,7 +2335,7 @@ DT::datatable(
     filter(.data$CoreMember) |>
     arrange(.data$Cluster, desc(.data$MaximumMembership)) |>
     select(
-      .data$Protein, .data$Cluster,
+      .data$Protein, .data$GeneSymbol, .data$Cluster,
       .data$MaximumMembership, .data$CoreMember
     ),
   rownames = FALSE,
@@ -2320,7 +2356,7 @@ DT::datatable(
 
 ```{r limma-mfuzz-core-columns, results='asis', echo=FALSE}
 column_guide(
-  c("Protein", "Cluster", "MaximumMembership", "CoreMember"),
+  c("Protein", "GeneSymbol", "Cluster", "MaximumMembership", "CoreMember"),
   "These cluster labels belong only to the limma-spline Mfuzz run. Full memberships remain in the downloadable limma-spline membership CSV."
 )
 ```
@@ -2476,7 +2512,6 @@ trajectory_explorer_means <- trajectory_explorer_points |>
   )
 
 trajectory_explorer_metadata <- combined_interpretation_results |>
-  left_join(protein_gene_annotation, by = "Protein") |>
   transmute(
     Protein = as.character(.data$Protein),
     GeneSymbol = as.character(.data$GeneSymbol),
@@ -2567,7 +2602,6 @@ trajectory_explorer_json <- gsub(
   min-height: 8.5rem;
 }
 .trajectory-card--category { border-top-color: #8172B2; }
-.trajectory-card--gene { border-top-color: #DD8452; }
 .trajectory-card--limma { border-top-color: #C44E52; }
 .trajectory-card--effect { border-top-color: #55A868; }
 .trajectory-card-label {
@@ -2784,12 +2818,7 @@ cat(
       cards.innerHTML = `<div class="trajectory-card trajectory-card--category">
           <div class="trajectory-card-label">Selected protein</div>
           <div class="trajectory-card-value">${escapeHtml(result.Protein)}</div>
-          <div class="trajectory-card-detail"><span class="trajectory-badge">${escapeHtml(result.SignificanceCategory)}</span></div>
-        </div>
-        <div class="trajectory-card trajectory-card--gene">
-          <div class="trajectory-card-label">Gene symbol (GN)</div>
-          <div class="trajectory-card-value">${escapeHtml(displayValue(result.GeneSymbol))}</div>
-          <div class="trajectory-card-detail">Parsed from the protein description in the input Proteome Discoverer workbook.</div>
+          <div class="trajectory-card-detail"><strong>Gene symbol (GN):</strong> ${escapeHtml(displayValue(result.GeneSymbol))}<br><span class="trajectory-badge">${escapeHtml(result.SignificanceCategory)}</span></div>
         </div>
         <div class="trajectory-card">
           <div class="trajectory-card-label">Orthogonal maSigPro</div>
