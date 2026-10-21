@@ -157,7 +157,10 @@ suppressPackageStartupMessages({
 })
 
 current_input <- tryCatch(knitr::current_input(), error = function(e) NULL)
-report_dir <- if (!is.null(current_input) && nzchar(current_input)) {
+report_source_dir <- Sys.getenv("PDTOMSSTATS_REPORT_SOURCE_DIR", unset = "")
+report_dir <- if (nzchar(report_source_dir)) {
+  normalizePath(report_source_dir, winslash = "/", mustWork = TRUE)
+} else if (!is.null(current_input) && nzchar(current_input)) {
   dirname(normalizePath(current_input, winslash = "/", mustWork = TRUE))
 } else {
   normalizePath(getwd(), winslash = "/", mustWork = TRUE)

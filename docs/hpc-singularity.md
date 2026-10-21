@@ -31,8 +31,8 @@ apptainer --version
 
 mkdir -p /data/Proteomics_IDSS/SIFs
 apptainer pull \
-  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.2.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.2.2
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.3.sif \
+  docker://ghcr.io/openomics/pdtomsstats:0.2.3
 ```
 
 Verify the installed image:
@@ -41,7 +41,7 @@ Verify the installed image:
 apptainer exec --containall --cleanenv \
   --bind /data/Proteomics_IDSS/prod/PDtoMSstats:/opt/PDtoMSstats:ro \
   --pwd /opt/PDtoMSstats \
-  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.2.sif \
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.3.sif \
   Rscript scripts/check_environment.R
 ```
 
@@ -195,6 +195,11 @@ The launcher also uses the selected job scratch as `APPTAINER_TMPDIR` and
 removes the legacy `SINGULARITY_TMPDIR`, avoiding conflicting temporary-
 directory settings.
 
+Quarto stages each report and its small shared resources under the writable
+job scratch before rendering. Intermediate files therefore never need to be
+written beside the read-only workflow checkout, while final reports and
+analysis objects continue to be written to the project results directories.
+
 The launcher does not create, remove, or alter host filesystem symlinks. A
 root-owned symlink under a shared filesystem is outside the R analysis and
 should be reviewed by the HPC storage administrators.
@@ -246,6 +251,11 @@ but a cluster may require its module initialization in the login shell.
 Check group membership with `id`, inspect the parent directory permissions,
 and apply the group-access correction above. The submitter must be able to
 write `logs/`, `results/`, and `tmp/`.
+
+An error that specifically says Quarto cannot write `msstats-psm-report.qmd`
+or `timecourse-masigpro-mfuzz.qmd` indicates a workflow release older than the
+writable-report-staging fix. Update the workflow before resubmitting; changing
+the shared checkout or SIF permissions is not required.
 
 ### Job is killed
 

@@ -66,6 +66,8 @@ if (!nzchar(quarto)) {
   stop("Quarto was not found on PATH. Install it from https://quarto.org/.", call. = FALSE)
 }
 
+source(file.path(repo_root, "R", "render-functions.R"))
+
 has_custom_template <- !is.null(config$report_template) &&
   length(config$report_template) == 1L &&
   !is.na(config$report_template) &&
@@ -79,8 +81,17 @@ report_file <- if (has_custom_template) {
 } else {
   file.path(repo_root, "timecourse-masigpro-mfuzz.qmd")
 }
-old_working_directory <- setwd(dirname(report_file))
+report_source_directory <- dirname(report_file)
+render_workspace <- pdt_stage_quarto_report(
+  report_file,
+  repo_root,
+  prefix = "pdtomsstats-timecourse-render-"
+)
+on.exit(unlink(render_workspace$directory, recursive = TRUE, force = TRUE), add = TRUE)
+report_file <- render_workspace$report
+old_working_directory <- setwd(render_workspace$directory)
 on.exit(setwd(old_working_directory), add = TRUE)
+Sys.setenv(PDTOMSSTATS_REPORT_SOURCE_DIR = report_source_directory)
 
 quarto_config <- tempfile(pattern = "timecourse-params-", fileext = ".yml")
 if (!file.copy(config_file, quarto_config, overwrite = TRUE)) {
@@ -101,7 +112,7 @@ if (!identical(render_status, 0L)) {
   stop("Quarto render failed with status ", render_status, ".", call. = FALSE)
 }
 
-rendered_file <- file.path(dirname(report_file), output_name)
+rendered_file <- file.path(render_workspace$directory, output_name)
 if (!file.exists(rendered_file)) {
   stop(
     "Quarto finished but the expected HTML file was not found: ",

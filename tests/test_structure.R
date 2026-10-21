@@ -50,6 +50,7 @@ required_files <- c(
   "R/contrast-functions.R",
   "R/qc-helper-functions.R",
   "R/pathway-analysis-functions.R",
+  "R/render-functions.R",
   "scripts/check_inputs.R",
   "scripts/describe_contrasts.R",
   "scripts/install_dependencies.R",
@@ -105,6 +106,19 @@ r_files <- list.files(repo_root, pattern = "[.]R$", recursive = TRUE, full.names
 for (file in r_files) {
   parse(file = file)
 }
+
+source(file.path(repo_root, "R", "render-functions.R"))
+staged_report <- pdt_stage_quarto_report(
+  file.path(repo_root, "msstats-psm-report.qmd"),
+  repo_root,
+  prefix = "pdtomsstats-test-render-"
+)
+if (!file.exists(staged_report$report) || file.access(staged_report$report, 2L) != 0L ||
+    !file.exists(file.path(staged_report$directory, "R", "input-functions.R")) ||
+    !file.exists(file.path(staged_report$directory, "assets", "style.css"))) {
+  stop("The writable Quarto staging directory is incomplete.", call. = FALSE)
+}
+unlink(staged_report$directory, recursive = TRUE, force = TRUE)
 
 qmd <- readLines(file.path(repo_root, "msstats-psm-report.qmd"), warn = FALSE)
 required_qmd_text <- c(

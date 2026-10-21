@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.3 - 2026-10-20
+
+- Render main and time-course Quarto reports from per-job writable staging
+  directories so the standardized read-only workflow mount works on HPC.
+
 ## 0.2.2 - 2026-10-20
 
 - Preserved logical filesystem paths in the standardized launcher and added

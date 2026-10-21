@@ -7,7 +7,7 @@ trap 'rm -rf "$test_root"' EXIT
 
 bash -n "$repo_root/pdtomsstats"
 version_output=$("$repo_root/pdtomsstats" version)
-grep -q '^PDtoMSstats: 0.2.2$' <<< "$version_output"
+grep -q '^PDtoMSstats: 0.2.3$' <<< "$version_output"
 
 project="$test_root/group-project"
 "$repo_root/pdtomsstats" init \
@@ -94,7 +94,7 @@ grep -q '^--containall$' "$runtime_args"
 grep -q '^--cleanenv$' "$runtime_args"
 grep -Fq "$repo_root:/opt/PDtoMSstats:ro" "$runtime_args"
 grep -Fq "$project:$project" "$runtime_args"
-grep -q '^PDTOMSSTATS_WORKFLOW_VERSION=0.2.2$' "$runtime_args"
+grep -q '^PDTOMSSTATS_WORKFLOW_VERSION=0.2.3$' "$runtime_args"
 grep -Fq "PDTOMSSTATS_CONTAINER_IMAGE=$fake_image" "$runtime_args"
 grep -Fq "PDTOMSSTATS_EXECUTION_PROFILE=$fake_profile" "$runtime_args"
 grep -q '^PDTOMSSTATS_EXECUTION_MODE=local$' "$runtime_args"

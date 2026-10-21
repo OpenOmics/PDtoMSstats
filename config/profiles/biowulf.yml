@@ -1,7 +1,7 @@
 # OpenOmics/Proteomics_IDSS execution profile for NIH Biowulf.
 runtime: "apptainer"
 module: "apptainer/1.4.5"
-image: "/data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.2.sif"
+image: "/data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.3.sif"
 group: "Proteomics_IDSS"
 default_mode: "slurm"
 

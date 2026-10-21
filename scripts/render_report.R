@@ -56,6 +56,7 @@ if (!nzchar(quarto)) {
 }
 
 source(file.path(repo_root, "R", "input-validation.R"))
+source(file.path(repo_root, "R", "render-functions.R"))
 check_msstats_inputs(config_file, repo_root, verbose = TRUE)
 
 has_custom_template <- !is.null(config$report_template) &&
@@ -71,13 +72,21 @@ report_file <- if (has_custom_template) {
 } else {
   file.path(repo_root, "msstats-psm-report.qmd")
 }
-old_working_directory <- setwd(dirname(report_file))
+report_source_directory <- dirname(report_file)
+render_workspace <- pdt_stage_quarto_report(
+  report_file,
+  repo_root,
+  prefix = "pdtomsstats-main-render-"
+)
+on.exit(unlink(render_workspace$directory, recursive = TRUE, force = TRUE), add = TRUE)
+report_file <- render_workspace$report
+old_working_directory <- setwd(render_workspace$directory)
 on.exit(setwd(old_working_directory), add = TRUE)
+Sys.setenv(PDTOMSSTATS_REPORT_SOURCE_DIR = report_source_directory)
 
-# Quarto is called from the repository root so the report itself can use a
-# short relative path. Copying the parameters to a temporary path avoids shell
-# quoting problems when a user stores the repository below a directory whose
-# name contains both spaces and apostrophes.
+# Quarto is called from a writable staging directory. Copying the parameters
+# to a temporary path also avoids shell quoting problems when a user stores
+# the repository below a directory whose name contains spaces or apostrophes.
 quarto_config <- tempfile(pattern = "msstats-params-", fileext = ".yml")
 if (!file.copy(config_file, quarto_config, overwrite = TRUE)) {
   stop("Could not prepare the temporary Quarto parameter file.", call. = FALSE)
@@ -97,7 +106,7 @@ if (!identical(render_status, 0L)) {
   stop("Quarto render failed with status ", render_status, ".", call. = FALSE)
 }
 
-rendered_file <- file.path(dirname(report_file), output_name)
+rendered_file <- file.path(render_workspace$directory, output_name)
 if (!file.exists(rendered_file)) {
   stop("Quarto finished but the expected HTML file was not found: ", rendered_file, call. = FALSE)
 }
