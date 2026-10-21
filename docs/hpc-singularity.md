@@ -31,8 +31,8 @@ apptainer --version
 
 mkdir -p /data/Proteomics_IDSS/SIFs
 apptainer pull \
-  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.3.sif \
-  docker://ghcr.io/openomics/pdtomsstats:0.2.3
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.4.sif \
+  docker://ghcr.io/openomics/pdtomsstats:0.2.4
 ```
 
 Verify the installed image:
@@ -41,7 +41,7 @@ Verify the installed image:
 apptainer exec --containall --cleanenv \
   --bind /data/Proteomics_IDSS/prod/PDtoMSstats:/opt/PDtoMSstats:ro \
   --pwd /opt/PDtoMSstats \
-  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.3.sif \
+  /data/Proteomics_IDSS/SIFs/pdtomsstats_0.2.4.sif \
   Rscript scripts/check_environment.R
 ```
 

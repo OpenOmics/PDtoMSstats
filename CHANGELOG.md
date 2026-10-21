@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.4 - 2026-10-21
+
 - Moved the time-course dashboard gene symbol into the selected-protein card
   for a four-card row and added gene symbols to protein-level time-course HTML
   and CSV tables.

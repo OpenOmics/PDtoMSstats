@@ -120,7 +120,7 @@ BuildKit secret:
 ```bash
 docker build \
   --secret id=corporate_ca,src=/path/to/approved-ca.crt \
-  --tag pdtomsstats:0.2.3 .
+  --tag pdtomsstats:0.2.4 .
 ```
 
 The certificate is available only while R packages are downloaded and is
