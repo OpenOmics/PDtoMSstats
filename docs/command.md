@@ -72,6 +72,71 @@ grouped under the configured results directory's `main/` subdirectory.
 Supporting main-analysis CSV/RDS/YAML files are grouped under `supporting/`,
 and time-course supporting files remain under `timecourse/`.
 
+## Run multiple independent analyses
+
+Use `--batch` when one project contains several independent PSM analyses. No
+batch manifest or shell loop is needed. Files in the project's `data/`
+directory define the analyses:
+
+```text
+data/
+├── annotation.xlsx
+├── bma-il10__psm.xlsx
+├── bma-il10__protein.xlsx
+├── bma-il13__psm.xlsx
+├── bma-il13__protein.xlsx
+├── tmes-il10__psm.xlsx
+├── tmes-il10__protein.xlsx
+├── tmes-il13__psm.xlsx
+└── tmes-il13__protein.xlsx
+```
+
+The exact convention is `<analysis-id>__psm.xlsx` and
+`<analysis-id>__protein.xlsx`. The double underscore separates the analysis ID
+from its file role. Role names and the `.xlsx` extension are lowercase. An
+analysis ID may contain letters, numbers, periods, hyphens, and underscores.
+
+`annotation.xlsx` is shared by default. An optional
+`<analysis-id>__annotation.xlsx` overrides it for one analysis. The same rule
+applies to optional contrasts: `contrasts.tsv` is shared and
+`<analysis-id>__contrasts.tsv` is an analysis-specific override. Explicit
+`--annotation` or `--contrast-file` options override automatic discovery.
+
+Validate every discovered analysis without submitting jobs:
+
+```bash
+./pdtomsstats validate --project /path/to/project \
+  --batch --outputs html,excel
+```
+
+Run or submit the complete batch:
+
+```bash
+./pdtomsstats run --project /path/to/project \
+  --batch --outputs html,excel
+```
+
+Before execution or submission, the launcher validates every discovered
+analysis. Excel output requires every PSM file to have a matching protein
+workbook. With a Slurm-default profile, one independent job is submitted per
+analysis and all IDs are saved in a batch record. Results are isolated under
+`results/<analysis-id>/`, each with its own `main/`, `figures/`, and
+`supporting/` directories.
+
+Use another discovery directory only when needed:
+
+```bash
+./pdtomsstats run --project /path/to/project \
+  --batch --batch-data-dir /path/to/project/another-data-directory \
+  --outputs html,excel
+```
+
+Per-analysis path and naming options such as `--psm`, `--protein-workbook`,
+`--request`, and `--output-dir` are intentionally assigned by batch discovery.
+All shared scientific options—column mappings, filtering, normalization,
+condition construction, thresholds, GSEA, and output selection—remain
+available on the batch command.
+
 When `html` is requested, the main analysis runs and refreshes its report and
 analysis RDS. An `excel`-only or `timecourse`-only run reuses the existing
 `supporting/msstats_workbook_export_objects.rds`; it does not silently rerun

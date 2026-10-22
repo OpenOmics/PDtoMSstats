@@ -116,6 +116,18 @@ Apptainer 1.4.5 and the 0.2.4 SIF, uses `--containall` rather than injecting
 `HOME`, and retains the generated Slurm script and logs in the project. See [standardized projects](docs/standardized-projects.md)
 and the complete [HPC guide](docs/hpc-singularity.md).
 
+Projects containing several independent analyses can use filename-based batch
+discovery. Name each pair `<analysis-id>__psm.xlsx` and
+`<analysis-id>__protein.xlsx`, add a shared `data/annotation.xlsx`, and run:
+
+```bash
+"$PDT" run --project "$PROJECT" --batch --outputs html,excel
+```
+
+The launcher validates every pair before submitting one Slurm job per analysis.
+It keeps all job IDs in a batch record, which the normal `status` command
+reports together. See [standardized projects](docs/standardized-projects.md#multiple-independent-analyses).
+
 ## Analyze a new project
 
 The main report needs:

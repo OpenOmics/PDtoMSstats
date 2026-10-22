@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added convention-based batch discovery for projects with multiple independent
+  analyses. The launcher validates all `<analysis-id>__psm.xlsx` inputs first,
+  pairs optional protein/annotation/contrast files, submits one Slurm job per
+  analysis, and records the complete batch for status reporting.
 - Grouped the main and time-course HTML reports and default formatted Excel
   workbook under a `main/` subdirectory of the configured results directory
   and grouped main-analysis CSV/RDS/YAML files under `supporting/`, while

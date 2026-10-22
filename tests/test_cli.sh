@@ -110,7 +110,14 @@ fake_bin="$test_root/bin"
 mkdir -p "$fake_bin"
 {
   printf '#!/usr/bin/env bash\n'
-  printf 'printf "Submitted batch job 4242\\n"\n'
+  printf 'if [[ -n "${PDT_TEST_SBATCH_COUNTER:-}" ]]; then\n'
+  printf '  count=$(cat "$PDT_TEST_SBATCH_COUNTER" 2>/dev/null || printf 5000)\n'
+  printf '  count=$((count + 1))\n'
+  printf '  printf "%%s\\n" "$count" > "$PDT_TEST_SBATCH_COUNTER"\n'
+  printf '  printf "Submitted batch job %%s\\n" "$count"\n'
+  printf 'else\n'
+  printf '  printf "Submitted batch job 4242\\n"\n'
+  printf 'fi\n'
 } > "$fake_bin/sbatch"
 chmod +x "$fake_bin/sbatch"
 PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run \
@@ -130,6 +137,47 @@ grep -Fq -- '--outputs html' "$job_script"
 PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run --mode slurm \
   --project "$project" --profile "$fake_profile" \
   --config "$project/config/group-project-main.yml" --outputs html >/dev/null
+
+# Convention-based batches validate all inputs first, then submit one Slurm
+# job per PSM/protein pair and retain a combined job registry.
+touch "$project/data/annotation.xlsx"
+for analysis in bma-il10 tmes-il13; do
+  touch "$project/data/${analysis}__psm.xlsx"
+  touch "$project/data/${analysis}__protein.xlsx"
+done
+sbatch_counter="$test_root/sbatch-counter.txt"
+export PDT_TEST_SBATCH_COUNTER="$sbatch_counter"
+PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run \
+  --project "$project" --profile "$fake_profile" \
+  --batch --outputs html,excel >/dev/null
+unset PDT_TEST_SBATCH_COUNTER
+test "$(cat "$sbatch_counter")" = 5002
+batch_file=$(cat "$project/.pdtomsstats/last-batch")
+test -f "$batch_file"
+test "$(wc -l < "$batch_file" | tr -d ' ')" = 3
+grep -q $'^bma-il10\tslurm\t5001\t' "$batch_file"
+grep -q $'^tmes-il13\tslurm\t5002\t' "$batch_file"
+test "$(cut -f4 "$batch_file" | tail -n +2 | sort -u | wc -l | tr -d ' ')" = 2
+batch_status=$(
+  PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" status \
+    --project "$project" --batch
+)
+grep -q 'bma-il10.*job=5001' <<< "$batch_status"
+grep -q 'tmes-il13.*job=5002' <<< "$batch_status"
+
+missing_pair_project="$test_root/missing-pair-project"
+"$repo_root/pdtomsstats" init \
+  --project "$missing_pair_project" --profile "$fake_profile" \
+  --modules main --request missing-pair >/dev/null
+touch "$missing_pair_project/data/annotation.xlsx"
+touch "$missing_pair_project/data/unpaired__psm.xlsx"
+if PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run \
+  --project "$missing_pair_project" --batch --outputs html,excel \
+  >"$test_root/missing-pair.out" 2>&1; then
+  echo "Batch submission accepted an Excel analysis without a protein workbook" >&2
+  exit 1
+fi
+grep -q 'Excel output requires the matching file' "$test_root/missing-pair.out"
 
 # A logical data path and its resolved physical path must both be available
 # inside Apptainer. This models the Biowulf /data -> /vf/users mapping without

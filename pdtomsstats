@@ -21,7 +21,7 @@ Usage:
   pdtomsstats validate [launcher options] [analysis options]
   pdtomsstats run [launcher options] [analysis options]
   pdtomsstats submit [launcher options] [Slurm options] [analysis options]
-  pdtomsstats status --project DIR [--job-id ID]
+  pdtomsstats status --project DIR [--job-id ID|--batch]
   pdtomsstats version [--profile PROFILE]
   pdtomsstats help
 
@@ -40,6 +40,9 @@ Launcher options:
   --runtime COMMAND   Override the profile container runtime.
   --image FILE        Override the profile SIF path.
   --job-tmp DIR       Override the job temporary directory.
+  --batch             Discover conventionally named independent analyses.
+  --batch-data-dir DIR
+                      Input directory for batch discovery (default: PROJECT/data).
 
 Initialization options:
   --modules LIST      main or main,timecourse (default: main).
@@ -61,6 +64,15 @@ Analysis output selection:
   --outputs timecourse              Time-course report from an existing RDS.
   --outputs html,excel,timecourse   Any combination; all is also accepted.
   --with-dependencies               Build a missing main-analysis RDS first.
+
+Batch input convention:
+  <analysis-id>__psm.xlsx           Statistical input for one analysis.
+  <analysis-id>__protein.xlsx       Matching formatted-workbook source.
+  annotation.xlsx                   Shared annotation for all analyses.
+  <analysis-id>__annotation.xlsx    Optional per-analysis annotation override.
+
+With --batch, every discovered analysis is validated first. A Slurm profile
+then submits one independent job per analysis and records all job IDs together.
 
 Run `pdtomsstats run --help-analysis` for the complete analysis option list.
 Without a profile, run uses the published Docker image locally as before. A
@@ -189,6 +201,22 @@ analysis_option_value() {
     if [[ "$argument" == "$wanted" && $# -gt 0 ]]; then printf '%s\n' "$1"; return; fi
     if [[ "$argument" == "$wanted="* ]]; then printf '%s\n' "${argument#*=}"; return; fi
   done
+}
+
+analysis_option_is_set() {
+  local wanted=$1 value
+  shift
+  value=$(analysis_option_value "$wanted" "$@")
+  [[ -n "$value" ]]
+}
+
+write_last_operation() {
+  local project_dir=$1 kind=$2 value=${3:-}
+  if [[ -n "$value" ]]; then
+    printf '%s:%s\n' "$kind" "$value" > "$project_dir/.pdtomsstats/last-operation"
+  else
+    printf '%s\n' "$kind" > "$project_dir/.pdtomsstats/last-operation"
+  fi
 }
 
 write_project_metadata() {
@@ -431,9 +459,10 @@ command_submit() {
   [[ -n "$memory" && "$memory" != null ]] || memory=32G
   [[ -n "$walltime" && "$walltime" != null ]] || walltime=08:00:00
 
-  local stamp script_file launch_text submission job_id
+  local stamp script_file launch_text submission job_id job_slug
   stamp=$(date +%Y%m%d-%H%M%S)
-  script_file="$project_dir/logs/pdtomsstats-$stamp.slurm"
+  job_slug=$(slug "$job_name")
+  script_file="$project_dir/logs/pdtomsstats-$stamp-$job_slug-$$.slurm"
   # Force local execution inside the allocation. Without this override, a
   # Slurm-default profile would recursively submit another job.
   local -a launch=("$LAUNCHER_DIR/pdtomsstats" run --mode local --project "$project_dir" --profile "$profile_file")
@@ -457,17 +486,240 @@ command_submit() {
   [[ "$job_id" =~ ^[0-9]+$ ]] || die "could not parse the Slurm job ID"
   printf '%s\n' "$job_id" > "$project_dir/.pdtomsstats/last-job-id"
   printf '%s\n' "$script_file" > "$project_dir/.pdtomsstats/last-job-script"
+  write_last_operation "$project_dir" single
   printf 'Job script: %s\n' "$script_file"
 }
 
+command_batch() {
+  local requested_command=$1 mode=$2 project_dir=$3 profile_file=$4
+  local runtime_override=$5 image_override=$6 job_tmp=$7 job_name=$8
+  local cpus=$9 memory=${10} walltime=${11} partition=${12} account=${13}
+  local batch_data_dir=${14}
+  shift 14
+  local -a analysis_args=("$@")
+  # Bash 3.2 treats an expansion of an empty array as an unset-variable error
+  # under `set -u`. Retain the normal wrapper default explicitly for a batch
+  # command that has no analysis options.
+  if ((${#analysis_args[@]} == 0)); then
+    analysis_args=(--outputs html)
+  fi
+
+  [[ -n "$project_dir" ]] || die "--batch requires --project or a standardized project directory"
+  project_dir=$(existing_dir "$project_dir")
+  if [[ -n "$batch_data_dir" ]]; then
+    batch_data_dir=$(existing_dir "$batch_data_dir")
+  else
+    batch_data_dir=$(existing_dir "$project_dir/data")
+  fi
+
+  local reserved
+  for reserved in --psm --protein-workbook --request --label --output-dir \
+    --figures-dir --excel-output --timecourse-config; do
+    if analysis_option_is_set "$reserved" "${analysis_args[@]}"; then
+      die "$reserved is assigned per analysis in --batch mode"
+    fi
+  done
+
+  local outputs outputs_lower needs_protein=false
+  outputs=$(analysis_option_value --outputs "${analysis_args[@]}")
+  [[ -n "$outputs" ]] || outputs=html
+  outputs_lower=$(printf '%s' "$outputs" | tr '[:upper:]' '[:lower:]')
+  case ",$outputs_lower," in
+    *,excel,*|*,all,*) needs_protein=true ;;
+  esac
+
+  local shared_annotation explicit_annotation explicit_contrast
+  shared_annotation="$batch_data_dir/annotation.xlsx"
+  explicit_annotation=$(analysis_option_value --annotation "${analysis_args[@]}")
+  explicit_contrast=$(analysis_option_value --contrast-file "${analysis_args[@]}")
+
+  local -a psm_files=() protein_files=()
+  shopt -s nullglob
+  psm_files=("$batch_data_dir"/*__psm.xlsx)
+  protein_files=("$batch_data_dir"/*__protein.xlsx)
+  shopt -u nullglob
+  if ((${#psm_files[@]} == 0)); then
+    die "no batch inputs found in $batch_data_dir (expected <analysis-id>__psm.xlsx)"
+  fi
+
+  local -a batch_ids=() batch_psms=() batch_proteins=()
+  local -a batch_annotations=() batch_contrasts=() batch_output_dirs=()
+  local file filename analysis_id protein annotation contrast output_dir existing_id
+  local existing_id_lower analysis_id_lower
+  for file in "${psm_files[@]}"; do
+    filename=$(basename "$file")
+    analysis_id=${filename%__psm.xlsx}
+    [[ "$analysis_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || \
+      die "invalid batch analysis ID '$analysis_id' in $filename"
+    analysis_id_lower=$(printf '%s' "$analysis_id" | tr '[:upper:]' '[:lower:]')
+    if ((${#batch_ids[@]})); then
+      for existing_id in "${batch_ids[@]}"; do
+        existing_id_lower=$(printf '%s' "$existing_id" | tr '[:upper:]' '[:lower:]')
+        [[ "$existing_id_lower" != "$analysis_id_lower" ]] || \
+          die "batch analysis IDs must also be unique when case is ignored: $existing_id and $analysis_id"
+      done
+    fi
+
+    protein="$batch_data_dir/${analysis_id}__protein.xlsx"
+    if [[ ! -f "$protein" ]]; then
+      if [[ "$needs_protein" == true ]]; then
+        die "Excel output requires the matching file: $protein"
+      fi
+      protein=""
+    fi
+
+    if [[ -n "$explicit_annotation" ]]; then
+      annotation=""
+    elif [[ -f "$batch_data_dir/${analysis_id}__annotation.xlsx" ]]; then
+      annotation="$batch_data_dir/${analysis_id}__annotation.xlsx"
+    elif [[ -f "$shared_annotation" ]]; then
+      annotation="$shared_annotation"
+    else
+      die "no annotation for $analysis_id; add annotation.xlsx, ${analysis_id}__annotation.xlsx, or --annotation FILE"
+    fi
+
+    if [[ -n "$explicit_contrast" ]]; then
+      contrast=""
+    elif [[ -f "$batch_data_dir/${analysis_id}__contrasts.tsv" ]]; then
+      contrast="$batch_data_dir/${analysis_id}__contrasts.tsv"
+    elif [[ -f "$batch_data_dir/contrasts.tsv" ]]; then
+      contrast="$batch_data_dir/contrasts.tsv"
+    else
+      contrast=""
+    fi
+
+    output_dir="$project_dir/results/$analysis_id"
+    batch_ids+=("$analysis_id")
+    batch_psms+=("$file")
+    batch_proteins+=("$protein")
+    batch_annotations+=("$annotation")
+    batch_contrasts+=("$contrast")
+    batch_output_dirs+=("$output_dir")
+  done
+
+  if ((${#protein_files[@]})); then
+    for file in "${protein_files[@]}"; do
+      filename=$(basename "$file")
+      analysis_id=${filename%__protein.xlsx}
+      [[ -f "$batch_data_dir/${analysis_id}__psm.xlsx" ]] || \
+        die "protein workbook has no matching PSM input: $file"
+    done
+  fi
+
+  printf '\nDiscovered %s independent batch analyses in %s\n' \
+    "${#batch_ids[@]}" "$batch_data_dir"
+  local index
+  for index in "${!batch_ids[@]}"; do
+    printf '  %s: %s' "${batch_ids[$index]}" "$(basename "${batch_psms[$index]}")"
+    if [[ -n "${batch_proteins[$index]}" ]]; then
+      printf ' + %s' "$(basename "${batch_proteins[$index]}")"
+    fi
+    printf '\n'
+  done
+
+  local -a common_launcher=(--project "$project_dir")
+  [[ -z "$profile_file" ]] || common_launcher+=(--profile "$profile_file")
+  [[ -z "$runtime_override" ]] || common_launcher+=(--runtime "$runtime_override")
+  [[ -z "$image_override" ]] || common_launcher+=(--image "$image_override")
+  [[ -z "$job_tmp" ]] || common_launcher+=(--job-tmp "$job_tmp")
+
+  printf '\nValidating every batch analysis before execution or submission...\n'
+  for index in "${!batch_ids[@]}"; do
+    analysis_id=${batch_ids[$index]}
+    local label=${analysis_id//_/ }
+    label=${label//-/ }
+    local -a item_args=("${analysis_args[@]}"
+      --psm "${batch_psms[$index]}"
+      --request "$analysis_id"
+      --label "$label"
+      --output-dir "${batch_output_dirs[$index]}"
+      --figures-dir "${batch_output_dirs[$index]}/figures")
+    [[ -z "${batch_proteins[$index]}" ]] || \
+      item_args+=(--protein-workbook "${batch_proteins[$index]}")
+    [[ -z "${batch_annotations[$index]}" ]] || \
+      item_args+=(--annotation "${batch_annotations[$index]}")
+    [[ -z "${batch_contrasts[$index]}" ]] || \
+      item_args+=(--contrast-file "${batch_contrasts[$index]}")
+    printf '\n[%s/%s] %s\n' "$((index + 1))" "${#batch_ids[@]}" "$analysis_id"
+    "$LAUNCHER_DIR/pdtomsstats" validate \
+      "${common_launcher[@]}" "${item_args[@]}"
+  done
+
+  if [[ "$requested_command" == validate ]]; then
+    printf '\nBatch validation complete. No jobs were submitted.\n'
+    return
+  fi
+
+  mkdir -p "$project_dir/.pdtomsstats/batches"
+  local stamp batch_file
+  stamp=$(date +%Y%m%d-%H%M%S)
+  batch_file="$project_dir/.pdtomsstats/batches/pdtomsstats-$stamp-$$.tsv"
+  printf 'analysis_id\tmode\tjob_id\tjob_script\toutput_dir\n' > "$batch_file"
+  printf '%s\n' "$batch_file" > "$project_dir/.pdtomsstats/last-batch"
+  write_last_operation "$project_dir" batch "$batch_file"
+
+  printf '\nStarting %s independent batch analyses...\n' "${#batch_ids[@]}"
+  for index in "${!batch_ids[@]}"; do
+    analysis_id=${batch_ids[$index]}
+    local label=${analysis_id//_/ }
+    label=${label//-/ }
+    local -a item_args=("${analysis_args[@]}"
+      --psm "${batch_psms[$index]}"
+      --request "$analysis_id"
+      --label "$label"
+      --output-dir "${batch_output_dirs[$index]}"
+      --figures-dir "${batch_output_dirs[$index]}/figures")
+    [[ -z "${batch_proteins[$index]}" ]] || \
+      item_args+=(--protein-workbook "${batch_proteins[$index]}")
+    [[ -z "${batch_annotations[$index]}" ]] || \
+      item_args+=(--annotation "${batch_annotations[$index]}")
+    [[ -z "${batch_contrasts[$index]}" ]] || \
+      item_args+=(--contrast-file "${batch_contrasts[$index]}")
+
+    local -a launch=("$LAUNCHER_DIR/pdtomsstats" run
+      "${common_launcher[@]}" --mode "$mode")
+    if [[ "$mode" == slurm ]]; then
+      local item_job_name
+      if [[ -n "$job_name" ]]; then
+        item_job_name="$(slug "$job_name")-$analysis_id"
+      else
+        item_job_name="pdt-$analysis_id"
+      fi
+      launch+=(--job-name "$(slug "$item_job_name")")
+      [[ -z "$cpus" ]] || launch+=(--cpus "$cpus")
+      [[ -z "$memory" ]] || launch+=(--memory "$memory")
+      [[ -z "$walltime" ]] || launch+=(--walltime "$walltime")
+      [[ -z "$partition" ]] || launch+=(--partition "$partition")
+      [[ -z "$account" ]] || launch+=(--account "$account")
+    fi
+    launch+=("${item_args[@]}")
+
+    printf '\n[%s/%s] %s\n' "$((index + 1))" "${#batch_ids[@]}" "$analysis_id"
+    "${launch[@]}"
+    if [[ "$mode" == slurm ]]; then
+      local submitted_job submitted_script
+      submitted_job=$(tr -d '[:space:]' < "$project_dir/.pdtomsstats/last-job-id")
+      submitted_script=$(tr -d '\n' < "$project_dir/.pdtomsstats/last-job-script")
+      printf '%s\t%s\t%s\t%s\t%s\n' "$analysis_id" "$mode" \
+        "$submitted_job" "$submitted_script" "${batch_output_dirs[$index]}" >> "$batch_file"
+    else
+      printf '%s\t%s\t-\t-\t%s\n' "$analysis_id" "$mode" \
+        "${batch_output_dirs[$index]}" >> "$batch_file"
+    fi
+    write_last_operation "$project_dir" batch "$batch_file"
+  done
+  printf '\nBatch record: %s\n' "$batch_file"
+}
+
 command_status() {
-  local project_dir="" job_id=""
+  local project_dir="" job_id="" force_batch=false
   while (($#)); do
     case "$1" in
       --project) [[ $# -ge 2 ]] || die "--project requires a directory"; project_dir=$2; shift 2 ;;
       --project=*) project_dir=${1#*=}; shift ;;
       --job-id) [[ $# -ge 2 ]] || die "--job-id requires a value"; job_id=$2; shift 2 ;;
       --job-id=*) job_id=${1#*=}; shift ;;
+      --batch) force_batch=true; shift ;;
       -h|--help) usage; return ;;
       *) die "unknown status option: $1" ;;
     esac
@@ -475,6 +727,50 @@ command_status() {
   [[ -n "$project_dir" ]] || project_dir=$(find_project_from_cwd)
   [[ -n "$project_dir" && -d "$project_dir" ]] || die "status requires --project DIR"
   project_dir=$(existing_dir "$project_dir")
+  local batch_file="" last_operation=""
+  if [[ "$force_batch" == true ]]; then
+    [[ -f "$project_dir/.pdtomsstats/last-batch" ]] || \
+      die "no submitted batch has been recorded for this project"
+    batch_file=$(tr -d '\n' < "$project_dir/.pdtomsstats/last-batch")
+  elif [[ -z "$job_id" && -f "$project_dir/.pdtomsstats/last-operation" ]]; then
+    last_operation=$(tr -d '\n' < "$project_dir/.pdtomsstats/last-operation")
+    [[ "$last_operation" != batch:* ]] || batch_file=${last_operation#batch:}
+  fi
+  if [[ -n "$batch_file" ]]; then
+    [[ -f "$batch_file" ]] || die "recorded batch file was not found: $batch_file"
+    printf 'Project: %s\nLatest batch: %s\n' "$project_dir" "$batch_file"
+    local -a batch_job_ids=()
+    local batch_analysis batch_mode batch_job batch_script batch_output
+    while IFS=$'\t' read -r batch_analysis batch_mode batch_job batch_script batch_output; do
+      [[ "$batch_analysis" != analysis_id ]] || continue
+      printf '  %-24s mode=%-6s job=%s\n' "$batch_analysis" "$batch_mode" "$batch_job"
+      if [[ "$batch_job" =~ ^[0-9]+$ ]]; then
+        batch_job_ids+=("$batch_job")
+      fi
+    done < "$batch_file"
+    if ((${#batch_job_ids[@]})); then
+      local job_list
+      job_list=$(IFS=,; printf '%s' "${batch_job_ids[*]}")
+      printf '\nScheduler status:\n'
+      if command -v sacct >/dev/null 2>&1; then
+        sacct -j "$job_list" --format=JobID,JobName,State,Elapsed,ExitCode,MaxRSS -X
+      elif command -v squeue >/dev/null 2>&1; then
+        squeue -j "$job_list" -o '%.18i %.24j %.12T %.10M %.10l %R'
+      else
+        printf 'Scheduler status tools are unavailable in this shell.\n'
+      fi
+      printf '\nBatch logs:\n'
+      for batch_job in "${batch_job_ids[@]}"; do
+        [[ ! -f "$project_dir/logs/pdtomsstats-$batch_job.out" ]] || \
+          printf '  %s\n' "$project_dir/logs/pdtomsstats-$batch_job.out"
+        [[ ! -f "$project_dir/logs/pdtomsstats-$batch_job.err" ]] || \
+          printf '  %s\n' "$project_dir/logs/pdtomsstats-$batch_job.err"
+      done
+    fi
+    printf '\nGenerated reports/workbooks:\n'
+    find "$project_dir/results" -type f \( -name '*.html' -o -name '*.xlsx' \) -print 2>/dev/null | sort | tail -n 40
+    return
+  fi
   [[ -n "$job_id" || ! -f "$project_dir/.pdtomsstats/last-job-id" ]] || job_id=$(tr -d '[:space:]' < "$project_dir/.pdtomsstats/last-job-id")
   printf 'Project: %s\n' "$project_dir"
   if [[ -n "$job_id" ]]; then
@@ -533,6 +829,7 @@ command_version() {
 
 command=run
 if [[ $# -gt 0 && "$1" != -* ]]; then command=$1; shift; fi
+requested_command=$command
 case "$command" in
   help|-h|--help) usage; exit 0 ;;
   init) command_init "$@"; exit 0 ;;
@@ -544,6 +841,7 @@ esac
 
 project_dir=""; profile_name=""; mode=""; runtime_override=""; image_override=""; job_tmp=""
 job_name=""; cpus=""; memory=""; walltime=""; partition=""; account=""
+batch=false; batch_data_dir=""
 declare -a analysis_args=()
 while (($#)); do
   case "$1" in
@@ -559,6 +857,9 @@ while (($#)); do
     --image=*) image_override=${1#*=}; shift ;;
     --job-tmp) [[ $# -ge 2 ]] || die "--job-tmp requires a directory"; job_tmp=$2; shift 2 ;;
     --job-tmp=*) job_tmp=${1#*=}; shift ;;
+    --batch) batch=true; shift ;;
+    --batch-data-dir) [[ $# -ge 2 ]] || die "--batch-data-dir requires a directory"; batch_data_dir=$2; shift 2 ;;
+    --batch-data-dir=*) batch_data_dir=${1#*=}; shift ;;
     --job-name) [[ $# -ge 2 ]] || die "--job-name requires a name"; job_name=$2; shift 2 ;;
     --job-name=*) job_name=${1#*=}; shift ;;
     --cpus) [[ $# -ge 2 ]] || die "--cpus requires a number"; cpus=$2; shift 2 ;;
@@ -605,6 +906,14 @@ fi
 
 [[ "$mode" == local || "$mode" == slurm ]] || \
   die "execution profile default_mode must be local or slurm"
+
+if [[ "$batch" == true ]]; then
+  command_batch "$requested_command" "$mode" "$project_dir" "$profile_file" \
+    "$runtime_override" "$image_override" "$job_tmp" "$job_name" "$cpus" \
+    "$memory" "$walltime" "$partition" "$account" "$batch_data_dir" \
+    "${analysis_args[@]}"
+  exit 0
+fi
 
 if [[ "$mode" == slurm ]]; then
   command_submit "$project_dir" "$profile_file" "$runtime_override" "$image_override" "$job_tmp" "$job_name" "$cpus" "$memory" "$walltime" "$partition" "$account" "${analysis_args[@]}"

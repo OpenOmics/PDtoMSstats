@@ -129,6 +129,41 @@ files are grouped under `results/supporting/`, including the RDS reused by
 downstream stages. Time-course supporting files remain under
 `results/timecourse/`.
 
+## Submit multiple independent analyses
+
+For a project containing independent datasets, name each input pair
+`<analysis-id>__psm.xlsx` and `<analysis-id>__protein.xlsx`. Put one shared
+annotation at `$PROJECT/data/annotation.xlsx`. For example:
+
+```text
+data/bma-il10__psm.xlsx
+data/bma-il10__protein.xlsx
+data/bma-il13__psm.xlsx
+data/bma-il13__protein.xlsx
+data/annotation.xlsx
+```
+
+Then validate or submit all pairs without a loop:
+
+```bash
+"$PDT" validate --project "$PROJECT" --batch --outputs html,excel
+
+"$PDT" run --project "$PROJECT" --batch --outputs html,excel \
+  --cpus 2 --memory 64G --walltime 12:00:00
+```
+
+The run command validates the complete discovered set before submitting
+anything, then sends one Slurm job per analysis. Each analysis receives its own
+`results/<analysis-id>/` tree. The normal status command shows all jobs in the
+latest batch together:
+
+```bash
+"$PDT" status --project "$PROJECT"
+```
+
+See [standardized projects](standardized-projects.md#multiple-independent-analyses)
+for per-analysis annotation and contrast overrides.
+
 ## Run inside an interactive allocation
 
 After obtaining an interactive allocation, override the profile default with

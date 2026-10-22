@@ -138,6 +138,53 @@ results/
 An explicit `--excel-output` path is still honored instead of the default
 `main/` location.
 
+## Multiple independent analyses
+
+A project can submit several separate analyses without a TSV manifest or a
+shell loop. Give each PSM/protein pair a shared analysis ID:
+
+```text
+data/
+├── annotation.xlsx
+├── bma-il10__psm.xlsx
+├── bma-il10__protein.xlsx
+├── bma-il13__psm.xlsx
+├── bma-il13__protein.xlsx
+├── tmes-il10__psm.xlsx
+├── tmes-il10__protein.xlsx
+├── tmes-il13__psm.xlsx
+└── tmes-il13__protein.xlsx
+```
+
+The filename convention is strict and case-sensitive:
+
+- `<analysis-id>__psm.xlsx` defines an independent analysis;
+- `<analysis-id>__protein.xlsx` is its matching workbook source and is required
+  when `excel` is requested;
+- `annotation.xlsx` is shared by all analyses;
+- `<analysis-id>__annotation.xlsx` optionally overrides the shared annotation;
+- `contrasts.tsv` is an optional shared contrast definition;
+- `<analysis-id>__contrasts.tsv` optionally overrides shared contrasts.
+
+Validate the discovered set first when reviewing a new project:
+
+```bash
+"$PDT" validate --project "$PROJECT" --batch --outputs html,excel
+```
+
+Submit it with one command:
+
+```bash
+"$PDT" run --project "$PROJECT" --batch --outputs html,excel
+```
+
+`run --batch` repeats the validation before any work is submitted, then creates
+one independent Slurm job per analysis. Outputs are written to
+`results/<analysis-id>/`. The combined job registry is retained under
+`.pdtomsstats/batches/`, and `pdtomsstats status --project "$PROJECT"` reports
+the latest batch automatically. Use `status --batch` to request the most recent
+batch explicitly after a later single-analysis submission.
+
 ## Submit and monitor
 
 ```bash
@@ -151,7 +198,8 @@ An explicit `--excel-output` path is still honored instead of the default
 ```
 
 The generated `.slurm` file and `%j` stdout/stderr logs are retained in
-`logs/`. The latest job ID is stored under `.pdtomsstats/`.
+`logs/`. The latest single job ID or complete batch registry is stored under
+`.pdtomsstats/`.
 
 `pdtomsstats submit` remains available as an explicit synonym for
 `pdtomsstats run --mode slurm`.
