@@ -141,10 +141,11 @@ PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run --mode slurm \
 # Convention-based batches validate all inputs first, then submit one Slurm
 # job per PSM/protein pair and retain a combined job registry.
 touch "$project/data/annotation.xlsx"
-touch "$project/data/bma-il10__PSM.XLSX"
+touch "$project/data/bma-il10__PSM.TXT"
 touch "$project/data/bma-il10__Proteins.XLSX"
 touch "$project/data/tmes-il13__psm.xlsx"
 touch "$project/data/tmes-il13__protein.xlsx"
+touch "$project/config/bma-il10__contrasts.tsv"
 sbatch_counter="$test_root/sbatch-counter.txt"
 export PDT_TEST_SBATCH_COUNTER="$sbatch_counter"
 PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run \
@@ -155,22 +156,26 @@ test "$(cat "$sbatch_counter")" = 5002
 batch_file=$(cat "$project/.pdtomsstats/last-batch")
 test -f "$batch_file"
 test "$(wc -l < "$batch_file" | tr -d ' ')" = 3
-grep -q $'^bma-il10\tslurm\t5001\t' "$batch_file"
-grep -q $'^tmes-il13\tslurm\t5002\t' "$batch_file"
+grep -q $'^bma-il10\tslurm\t500[12]\t' "$batch_file"
+grep -q $'^tmes-il13\tslurm\t500[12]\t' "$batch_file"
+test "$(cut -f3 "$batch_file" | tail -n +2 | sort | paste -sd, -)" = "5001,5002"
 test "$(cut -f4 "$batch_file" | tail -n +2 | sort -u | wc -l | tr -d ' ')" = 2
+bma_job_script=$(awk -F '\t' '$1 == "bma-il10" {print $4}' "$batch_file")
+grep -Fq -- "--contrast-file $project/config/bma-il10__contrasts.tsv" \
+  "$bma_job_script"
 batch_status=$(
   PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" status \
     --project "$project" --batch
 )
-grep -q 'bma-il10.*job=5001' <<< "$batch_status"
-grep -q 'tmes-il13.*job=5002' <<< "$batch_status"
+grep -Eq 'bma-il10.*job=500[12]' <<< "$batch_status"
+grep -Eq 'tmes-il13.*job=500[12]' <<< "$batch_status"
 
 missing_pair_project="$test_root/missing-pair-project"
 "$repo_root/pdtomsstats" init \
   --project "$missing_pair_project" --profile "$fake_profile" \
   --modules main --request missing-pair >/dev/null
 touch "$missing_pair_project/data/annotation.xlsx"
-touch "$missing_pair_project/data/unpaired__psm.xlsx"
+touch "$missing_pair_project/data/unpaired__psm.csv"
 if PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run \
   --project "$missing_pair_project" --batch --outputs html,excel \
   >"$test_root/missing-pair.out" 2>&1; then

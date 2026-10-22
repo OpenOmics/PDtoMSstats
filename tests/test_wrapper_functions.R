@@ -258,6 +258,18 @@ stopifnot(
   identical(timecourse$limma_interaction_fdr, 0.05)
 )
 
+inferred_comparison_options <- options
+inferred_comparison_options$comparison_group <- NULL
+inferred_comparison <- pdt_prepare_timecourse_config(
+  prepared$config,
+  prepared$annotation,
+  inferred_comparison_options,
+  setdiff(provided, "comparison_group"),
+  test_dir,
+  interactive_allowed = FALSE
+)
+stopifnot(identical(inferred_comparison$comparison_group, "Treatment"))
+
 custom_timecourse_options <- options
 custom_timecourse_options$spline_df <- "4"
 custom_timecourse_options$limma_interaction_fdr <- "0.1"

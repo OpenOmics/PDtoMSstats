@@ -117,9 +117,10 @@ Apptainer 1.4.5 and the 0.2.4 SIF, uses `--containall` rather than injecting
 and the complete [HPC guide](docs/hpc-singularity.md).
 
 Projects containing several independent analyses can use filename-based batch
-discovery. Name each pair `<analysis-id>__PSM.xlsx` and
+discovery. Name each pair `<analysis-id>__PSM.EXT` and
 `<analysis-id>__protein.xlsx`, add a shared `data/annotation.xlsx`, and run.
-The role suffixes are case-insensitive, and `protein` or `proteins` is accepted:
+PSM extensions may be XLSX, XLS, TXT, TSV, or CSV. Role suffixes and extensions
+are case-insensitive, and `protein` or `proteins` is accepted:
 
 ```bash
 "$PDT" run --project "$PROJECT" --batch --outputs html,excel

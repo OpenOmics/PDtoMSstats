@@ -8,6 +8,11 @@
   analysis, and records the complete batch for status reporting.
 - Made batch PSM and protein role suffixes case-insensitive and accepted both
   singular `protein` and plural `proteins`, while rejecting ambiguous pairs.
+- Extended batch PSM discovery to XLS, XLSX, TXT, TSV, and CSV inputs and made
+  `config/<analysis-id>__contrasts.tsv` the preferred location for independent
+  contrast definitions.
+- Infer the time-course comparison group when the per-analysis annotation has
+  exactly one group other than the requested reference group.
 - Clarified that batch discovery supports one or many independent analyses and
   documented the YAML-free explicit-input alternative for custom filenames.
 - Grouped the main and time-course HTML reports and default formatted Excel

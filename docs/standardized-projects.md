@@ -146,7 +146,7 @@ shell loop. Give each PSM/protein pair a shared analysis ID:
 ```text
 data/
 ├── annotation.xlsx
-├── bma-il10__psm.xlsx
+├── bma-il10__psm.txt
 ├── bma-il10__protein.xlsx
 ├── bma-il13__psm.xlsx
 ├── bma-il13__protein.xlsx
@@ -159,16 +159,19 @@ data/
 The filename pairing convention is strict, but role suffix capitalization is
 flexible:
 
-- `<analysis-id>__PSM.xlsx` defines an independent analysis;
+- `<analysis-id>__PSM.EXT` defines an independent analysis, where `EXT` is
+  XLSX, XLS, TXT, TSV, or CSV;
 - `<analysis-id>__protein.xlsx` or `<analysis-id>__proteins.xlsx` is its
   matching workbook source and is required when `excel` is requested;
 - `annotation.xlsx` is shared by all analyses;
 - `<analysis-id>__annotation.xlsx` optionally overrides the shared annotation;
-- `contrasts.tsv` is an optional shared contrast definition;
-- `<analysis-id>__contrasts.tsv` optionally overrides shared contrasts.
+- `config/contrasts.tsv` is an optional shared contrast definition;
+- `config/<analysis-id>__contrasts.tsv` optionally overrides shared contrasts.
 
-The `PSM`, `protein`/`proteins`, and `.xlsx` portions are case-insensitive.
-Ambiguous duplicate protein matches are rejected.
+The role suffixes and extensions are case-insensitive. The protein source must
+remain XLSX. Contrast files under `data/` are also accepted for compatibility,
+but matching files under `config/` take precedence. Ambiguous duplicate
+protein matches are rejected.
 
 Validate the discovered set first when reviewing a new project:
 
@@ -190,7 +193,7 @@ the latest batch automatically. Use `status --batch` to request the most recent
 batch explicitly after a later single-analysis submission.
 
 The same mode works for a project containing only one independent PSM/protein
-pair. With `annotation.xlsx`, `experiment__PSM.xlsx`, and
+pair. With `annotation.xlsx`, `experiment__PSM.txt`, and
 `experiment__protein.xlsx` under `data/`, `run --batch` submits one job and
 writes `results/experiment/`. The generated main YAML and contrast TSV do not
 need to be edited for conventionally named batch inputs.

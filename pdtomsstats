@@ -66,7 +66,7 @@ Analysis output selection:
   --with-dependencies               Build a missing main-analysis RDS first.
 
 Batch input convention:
-  <analysis-id>__PSM.xlsx           Statistical input; role is case-insensitive.
+  <analysis-id>__PSM.EXT            PSM input; EXT is xlsx, xls, txt, tsv, or csv.
   <analysis-id>__protein.xlsx       Matching source; protein(s), any case.
   annotation.xlsx                   Shared annotation for all analyses.
   <analysis-id>__annotation.xlsx    Optional per-analysis annotation override.
@@ -135,6 +135,10 @@ batch_analysis_id() {
   lower=$(printf '%s' "$filename" | tr '[:upper:]' '[:lower:]')
   case "$role:$lower" in
     psm:*__psm.xlsx) suffix=__psm.xlsx ;;
+    psm:*__psm.xls) suffix=__psm.xls ;;
+    psm:*__psm.txt) suffix=__psm.txt ;;
+    psm:*__psm.tsv) suffix=__psm.tsv ;;
+    psm:*__psm.csv) suffix=__psm.csv ;;
     protein:*__proteins.xlsx) suffix=__proteins.xlsx ;;
     protein:*__protein.xlsx) suffix=__protein.xlsx ;;
     *) return 1 ;;
@@ -548,7 +552,13 @@ command_batch() {
   local -a psm_files=() protein_files=()
   shopt -s nullglob
   shopt -s nocaseglob
-  psm_files=("$batch_data_dir"/*__psm.xlsx)
+  psm_files=(
+    "$batch_data_dir"/*__psm.xlsx
+    "$batch_data_dir"/*__psm.xls
+    "$batch_data_dir"/*__psm.txt
+    "$batch_data_dir"/*__psm.tsv
+    "$batch_data_dir"/*__psm.csv
+  )
   protein_files=(
     "$batch_data_dir"/*__protein.xlsx
     "$batch_data_dir"/*__proteins.xlsx
@@ -556,7 +566,7 @@ command_batch() {
   shopt -u nocaseglob
   shopt -u nullglob
   if ((${#psm_files[@]} == 0)); then
-    die "no batch inputs found in $batch_data_dir (expected <analysis-id>__PSM.xlsx; role and extension are case-insensitive)"
+    die "no batch inputs found in $batch_data_dir (expected <analysis-id>__PSM with xlsx, xls, txt, tsv, or csv extension)"
   fi
 
   local -a batch_ids=() batch_psms=() batch_proteins=()
@@ -613,8 +623,12 @@ command_batch() {
 
     if [[ -n "$explicit_contrast" ]]; then
       contrast=""
+    elif [[ -f "$project_dir/config/${analysis_id}__contrasts.tsv" ]]; then
+      contrast="$project_dir/config/${analysis_id}__contrasts.tsv"
     elif [[ -f "$batch_data_dir/${analysis_id}__contrasts.tsv" ]]; then
       contrast="$batch_data_dir/${analysis_id}__contrasts.tsv"
+    elif [[ -f "$project_dir/config/contrasts.tsv" ]]; then
+      contrast="$project_dir/config/contrasts.tsv"
     elif [[ -f "$batch_data_dir/contrasts.tsv" ]]; then
       contrast="$batch_data_dir/contrasts.tsv"
     else

@@ -96,6 +96,10 @@ When `contrast_file` is set, leave `contrasts` and `weighted_contrasts` null.
 The report validates the file, writes `msstats_contrast_guide.csv`, and saves
 the definitions for the formatted workbook exporter.
 
+In batch mode, place a shared file at `config/contrasts.tsv` or an override at
+`config/<analysis-id>__contrasts.tsv`. Matching filenames under `data/` are
+also supported, but `config/` takes precedence.
+
 ## Filtering and MSstats
 
 | Setting | Meaning | Default |

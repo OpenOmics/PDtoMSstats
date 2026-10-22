@@ -81,7 +81,7 @@ directory define the analyses:
 ```text
 data/
 ├── annotation.xlsx
-├── bma-il10__psm.xlsx
+├── bma-il10__psm.txt
 ├── bma-il10__protein.xlsx
 ├── bma-il13__psm.xlsx
 ├── bma-il13__protein.xlsx
@@ -91,19 +91,22 @@ data/
 └── tmes-il13__protein.xlsx
 ```
 
-The convention is `<analysis-id>__PSM.xlsx` plus either
+The convention is `<analysis-id>__PSM.EXT` plus either
 `<analysis-id>__protein.xlsx` or `<analysis-id>__proteins.xlsx`. The double
 underscore separates the analysis ID from its file role. `PSM`, `protein` or
-`proteins`, and the `.xlsx` extension are case-insensitive, so lowercase and
-uppercase Proteome Discoverer names both work. An analysis ID may contain
+`proteins`, and the extension are case-insensitive. PSM input may use XLSX,
+XLS, TXT, TSV, or CSV; the protein source remains an XLSX workbook. Lowercase
+and uppercase Proteome Discoverer names therefore both work. An analysis ID may contain
 letters, numbers, periods, hyphens, and underscores. If both a singular and
 plural protein file match one analysis, validation stops instead of choosing
 one silently.
 
 `annotation.xlsx` is shared by default. An optional
 `<analysis-id>__annotation.xlsx` overrides it for one analysis. The same rule
-applies to optional contrasts: `contrasts.tsv` is shared and
-`<analysis-id>__contrasts.tsv` is an analysis-specific override. Explicit
+applies to optional contrasts: `config/contrasts.tsv` is shared and
+`config/<analysis-id>__contrasts.tsv` is an analysis-specific override. The
+same names under `data/` remain supported, but `config/` takes precedence so
+model definitions can remain separate from input data. Explicit
 `--annotation` or `--contrast-file` options override automatic discovery.
 
 Validate every discovered analysis without submitting jobs:
@@ -147,7 +150,7 @@ conventionally named pair is discovered and run in exactly the same way:
 ```text
 data/
 ├── annotation.xlsx
-├── experiment__PSM.xlsx
+├── experiment__PSM.txt
 └── experiment__protein.xlsx
 ```
 
@@ -318,6 +321,11 @@ The time-course report fits orthogonal-polynomial maSigPro and limma natural
 splines, then runs Mfuzz independently on each method's significant proteins.
 It is for independent samples and stops if biological replicate identifiers
 repeat across time points.
+
+`--comparison-group` may be omitted when the annotation contains exactly one
+group other than `--reference-group`; the wrapper then selects that sole group
+and records the inferred value in the resolved time-course configuration. This
+is useful for batches whose two-group analyses have different comparison names.
 
 When `--protein-workbook` is supplied, the interactive trajectory dashboard
 also shows the gene symbol parsed from each protein description's `GN=` field.

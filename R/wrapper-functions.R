@@ -880,8 +880,15 @@ pdt_prepare_timecourse_config <- function(main_config, annotation, options,
     }
   }
   if (!pdt_is_set(config$comparison_group)) {
-    comparison_default <- setdiff(group_values, config$reference_group)[[1]]
-    if (interactive_allowed) {
+    comparison_candidates <- setdiff(group_values, config$reference_group)
+    comparison_default <- comparison_candidates[[1]]
+    if (length(comparison_candidates) == 1L) {
+      config$comparison_group <- comparison_default
+      cat(
+        "Comparison group was inferred as the only non-reference group: ",
+        comparison_default, "\n", sep = ""
+      )
+    } else if (interactive_allowed) {
       config$comparison_group <- pdt_prompt(
         paste0("Comparison group (", paste(group_values, collapse = ", "), ")"),
         comparison_default, TRUE

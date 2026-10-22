@@ -132,13 +132,14 @@ downstream stages. Time-course supporting files remain under
 ## Submit multiple independent analyses
 
 For a project containing independent datasets, name each input pair
-`<analysis-id>__PSM.xlsx` and either `<analysis-id>__protein.xlsx` or
-`<analysis-id>__proteins.xlsx`. These role suffixes and the extension are
-case-insensitive. Put one shared annotation at `$PROJECT/data/annotation.xlsx`.
+`<analysis-id>__PSM.EXT` and either `<analysis-id>__protein.xlsx` or
+`<analysis-id>__proteins.xlsx`. PSM input may be XLSX, XLS, TXT, TSV, or CSV;
+role suffixes and extensions are case-insensitive. Put one shared annotation
+at `$PROJECT/data/annotation.xlsx`.
 For example:
 
 ```text
-data/bma-il10__psm.xlsx
+data/bma-il10__psm.txt
 data/bma-il10__protein.xlsx
 data/bma-il13__psm.xlsx
 data/bma-il13__protein.xlsx
