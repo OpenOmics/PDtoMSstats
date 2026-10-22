@@ -1,5 +1,5 @@
 # PDtoMSstats independent-sample time-course template.
-analysis_file: "__PROJECT_DIR__/results/msstats_workbook_export_objects.rds"
+analysis_file: "__PROJECT_DIR__/results/supporting/msstats_workbook_export_objects.rds"
 # Optional. When --protein-workbook is supplied, the launcher fills this path
 # automatically so the dashboard can display the description's GN= symbol.
 protein_workbook: null

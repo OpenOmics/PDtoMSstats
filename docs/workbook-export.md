@@ -24,11 +24,12 @@ Rscript scripts/export_workbook.R \
 
 Without the third argument, the workbook is written to
 `results/my-project/main/` beside the main HTML report. The analysis objects
-read by the exporter remain directly under `results/my-project/`.
+read by the exporter are under `results/my-project/supporting/`.
 
 The wrapper:
 
-1. Reads `msstats_workbook_export_objects.rds` from the results directory.
+1. Reads `msstats_workbook_export_objects.rds` from the results directory's
+   `supporting/` subdirectory, with a fallback to the legacy results root.
 2. Calculates unnormalized, non-imputed protein abundances with the report's
    saved summarization settings.
 3. Renames the complete hierarchical worksheet to `Peptide` and creates a

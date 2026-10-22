@@ -48,22 +48,34 @@ if (job_mode) {
     )
   }
   protein_file <- resolve_path(job$protein_file)
-  results_dir <- resolve_path(job$results_dir)
+  results_root <- resolve_path(job$results_dir)
 } else {
   protein_file <- resolve_path(args[[1]])
-  results_dir <- resolve_path(args[[2]])
+  results_root <- resolve_path(args[[2]])
 }
-objects_file <- file.path(results_dir, "msstats_workbook_export_objects.rds")
-if (!file.exists(objects_file)) {
+objects_candidates <- c(
+  file.path(
+    results_root, "supporting", "msstats_workbook_export_objects.rds"
+  ),
+  file.path(results_root, "msstats_workbook_export_objects.rds")
+)
+existing_objects <- objects_candidates[file.exists(objects_candidates)]
+if (!length(existing_objects)) {
   stop(
-    "Missing ", objects_file, ". Render the report before exporting the workbook.",
+    "Missing MSstats analysis objects. Tried: ",
+    paste(objects_candidates, collapse = ", "),
+    ". Render the report before exporting the workbook.",
     call. = FALSE
   )
 }
+objects_file <- existing_objects[[1L]]
+analysis_results_dir <- dirname(objects_file)
 
-unnormalized_file <- file.path(results_dir, "msstats_unnormalized_protein_level.rds")
+unnormalized_file <- file.path(
+  analysis_results_dir, "msstats_unnormalized_protein_level.rds"
+)
 default_output <- file.path(
-  results_dir, "main",
+  results_root, "main",
   paste0(tools::file_path_sans_ext(basename(protein_file)), "_MSstats.xlsx")
 )
 output_file <- if (job_mode && !is.null(job$output_file) &&
@@ -91,7 +103,7 @@ calculate_unnormalized_msstats_protein_abundance(objects_file, unnormalized_file
 
 source(export_script)
 export_msstats_workbook(
-  protein_file, objects_file, results_dir, output_file,
+  protein_file, objects_file, analysis_results_dir, output_file,
   maximum_allowed_fold_change = if (job_mode) job$maximum_allowed_fold_change else NULL
 )
 

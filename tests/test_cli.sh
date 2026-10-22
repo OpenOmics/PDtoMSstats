@@ -20,6 +20,9 @@ project=$(cd "$project" && pwd -L)
 for directory in config data logs results tmp .pdtomsstats; do
   test -d "$project/$directory"
 done
+for directory in main figures supporting timecourse; do
+  test -d "$project/results/$directory"
+done
 for file in \
   config/group-project-main.yml \
   config/group-project-timecourse.yml \

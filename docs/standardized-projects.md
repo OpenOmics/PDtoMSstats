@@ -44,6 +44,10 @@ my-project/
 ├── data/
 ├── logs/
 ├── results/
+│   ├── figures/
+│   ├── main/
+│   ├── supporting/
+│   └── timecourse/
 └── tmp/
 ```
 
@@ -106,9 +110,11 @@ explicitly, or `--mode local` to execute in the current allocation. Without an
 execution profile, Docker runs locally.
 
 `excel` and `timecourse` reuse
-`results/msstats_workbook_export_objects.rds`. They stop when it is absent so
-that a supposedly downstream-only run cannot silently repeat a large main
-analysis. Add `--with-dependencies` to generate that missing prerequisite.
+`results/supporting/msstats_workbook_export_objects.rds`. They stop when it is
+absent so that a supposedly downstream-only run cannot silently repeat a large
+main analysis. Add `--with-dependencies` to generate that missing prerequisite.
+For compatibility, existing objects in the legacy results-root location are
+still recognized.
 
 After a complete run, the results are organized as:
 
@@ -120,10 +126,13 @@ results/
 │   └── proteins_MSstats.xlsx
 ├── timecourse/
 │   └── time-course CSV/RDS/YAML files
-├── msstats_workbook_export_objects.rds
-├── main-analysis CSV/RDS files
-├── pdtomsstats-resolved.yml
-└── pdtomsstats-run.yml
+├── figures/
+│   └── main and time-course figures
+└── supporting/
+    ├── msstats_workbook_export_objects.rds
+    ├── main-analysis CSV/RDS files
+    ├── pdtomsstats-resolved.yml
+    └── pdtomsstats-run.yml
 ```
 
 An explicit `--excel-output` path is still honored instead of the default
@@ -180,7 +189,7 @@ Use the following before or after a run:
 "$PDT" version --project "$PROJECT"
 ```
 
-Every analysis also writes resolved YAML and `pdtomsstats-run.yml` in the main
-results directory. The run manifest records the requested outputs, dependency
+Every analysis also writes resolved YAML and `pdtomsstats-run.yml` under
+`results/supporting/`. The run manifest records the requested outputs, dependency
 behavior, analysis RDS, configurations, workbook input, workflow version and
 commit, container, execution profile/mode, Slurm job ID, and creation time.

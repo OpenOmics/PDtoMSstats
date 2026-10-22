@@ -11,6 +11,25 @@ pdt_main_output_dir <- function(output_dir) {
   file.path(as.character(output_dir)[[1L]], "main")
 }
 
+pdt_supporting_output_dir <- function(output_dir) {
+  file.path(as.character(output_dir)[[1L]], "supporting")
+}
+
+pdt_analysis_object_file <- function(output_dir, refresh = FALSE) {
+  preferred <- file.path(
+    pdt_supporting_output_dir(output_dir),
+    "msstats_workbook_export_objects.rds"
+  )
+  legacy <- file.path(
+    as.character(output_dir)[[1L]],
+    "msstats_workbook_export_objects.rds"
+  )
+  if (!isTRUE(refresh) && !file.exists(preferred) && file.exists(legacy)) {
+    return(legacy)
+  }
+  preferred
+}
+
 pdt_default_workbook_output <- function(output_dir, protein_workbook) {
   file.path(
     pdt_main_output_dir(output_dir),
@@ -773,14 +792,14 @@ pdt_apply_cli_to_timecourse <- function(config, options, provided) {
 
 pdt_prepare_timecourse_config <- function(main_config, annotation, options,
                                           provided, project_root,
+                                          analysis_file = NULL,
                                           interactive_allowed = FALSE) {
   user_config <- pdt_read_config(options$timecourse_config, project_root)
   config <- utils::modifyList(pdt_timecourse_defaults(), user_config)
   config <- pdt_apply_cli_to_timecourse(config, options, provided)
 
-  config$analysis_file <- file.path(
-    main_config$output_dir, "msstats_workbook_export_objects.rds"
-  )
+  config$analysis_file <- analysis_file %||%
+    pdt_analysis_object_file(main_config$output_dir)
   if (!pdt_is_set(config$request)) {
     config$request <- paste0(main_config$request, "-timecourse")
   }

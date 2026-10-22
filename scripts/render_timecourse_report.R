@@ -43,18 +43,40 @@ resolve_repo_path <- function(path) {
   if (grepl("^(/|[A-Za-z]:[/\\\\])", path)) path else file.path(repo_root, path)
 }
 
-analysis_file <- resolve_repo_path(config$analysis_file)
-if (!file.exists(analysis_file)) {
-  stop("Analysis RDS not found: ", analysis_file, call. = FALSE)
+configured_analysis_file <- resolve_repo_path(config$analysis_file)
+analysis_directory <- dirname(configured_analysis_file)
+analysis_name <- basename(configured_analysis_file)
+legacy_or_supporting_file <- if (basename(analysis_directory) == "supporting") {
+  file.path(dirname(analysis_directory), analysis_name)
+} else {
+  file.path(analysis_directory, "supporting", analysis_name)
 }
+analysis_candidates <- unique(c(
+  configured_analysis_file,
+  legacy_or_supporting_file
+))
+existing_analysis <- analysis_candidates[file.exists(analysis_candidates)]
+if (!length(existing_analysis)) {
+  stop(
+    "Analysis RDS not found. Tried: ",
+    paste(analysis_candidates, collapse = ", "),
+    call. = FALSE
+  )
+}
+analysis_file <- existing_analysis[[1L]]
 
 output_dir <- resolve_repo_path(config$output_dir)
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 output_dir <- normalizePath(output_dir, winslash = "/", mustWork = TRUE)
-report_output_dir <- file.path(
-  dirname(normalizePath(analysis_file, winslash = "/", mustWork = TRUE)),
-  "main"
+analysis_directory <- dirname(
+  normalizePath(analysis_file, winslash = "/", mustWork = TRUE)
 )
+results_root <- if (basename(analysis_directory) == "supporting") {
+  dirname(analysis_directory)
+} else {
+  analysis_directory
+}
+report_output_dir <- file.path(results_root, "main")
 dir.create(report_output_dir, recursive = TRUE, showWarnings = FALSE)
 report_output_dir <- normalizePath(
   report_output_dir, winslash = "/", mustWork = TRUE
@@ -102,9 +124,8 @@ on.exit(setwd(old_working_directory), add = TRUE)
 Sys.setenv(PDTOMSSTATS_REPORT_SOURCE_DIR = report_source_directory)
 
 quarto_config <- tempfile(pattern = "timecourse-params-", fileext = ".yml")
-if (!file.copy(config_file, quarto_config, overwrite = TRUE)) {
-  stop("Could not prepare the temporary Quarto parameter file.", call. = FALSE)
-}
+config$analysis_file <- analysis_file
+yaml::write_yaml(config, quarto_config)
 on.exit(unlink(quarto_config), add = TRUE)
 
 cat("Rendering", output_name, "...\n")

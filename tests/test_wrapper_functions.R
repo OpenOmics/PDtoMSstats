@@ -25,6 +25,16 @@ stopifnot(
     file.path("results/project", "main")
   ),
   identical(
+    pdt_supporting_output_dir("results/project"),
+    file.path("results/project", "supporting")
+  ),
+  identical(
+    pdt_analysis_object_file("results/project"),
+    file.path(
+      "results/project", "supporting", "msstats_workbook_export_objects.rds"
+    )
+  ),
+  identical(
     pdt_default_workbook_output("results/project", "/input/Proteins.xlsx"),
     file.path("results/project", "main", "Proteins_MSstats.xlsx")
   )
@@ -140,6 +150,34 @@ test_dir <- tempfile("pdtomsstats-wrapper-")
 dir.create(test_dir, recursive = TRUE)
 on.exit(unlink(test_dir, recursive = TRUE, force = TRUE), add = TRUE)
 
+compatibility_dir <- file.path(test_dir, "compatibility-results")
+dir.create(compatibility_dir)
+legacy_analysis_file <- file.path(
+  compatibility_dir, "msstats_workbook_export_objects.rds"
+)
+stopifnot(file.create(legacy_analysis_file))
+stopifnot(
+  identical(
+    pdt_analysis_object_file(compatibility_dir),
+    legacy_analysis_file
+  )
+)
+preferred_analysis_file <- file.path(
+  compatibility_dir, "supporting", "msstats_workbook_export_objects.rds"
+)
+dir.create(dirname(preferred_analysis_file))
+stopifnot(file.create(preferred_analysis_file))
+stopifnot(
+  identical(
+    pdt_analysis_object_file(compatibility_dir),
+    preferred_analysis_file
+  ),
+  identical(
+    pdt_analysis_object_file(compatibility_dir, refresh = TRUE),
+    preferred_analysis_file
+  )
+)
+
 psm_file <- file.path(test_dir, "psm.csv")
 annotation_file <- file.path(test_dir, "annotation.csv")
 protein_workbook <- file.path(test_dir, "proteins.xlsx")
@@ -198,6 +236,14 @@ timecourse <- pdt_prepare_timecourse_config(
   interactive_allowed = FALSE
 )
 stopifnot(
+  identical(
+    timecourse$analysis_file,
+    file.path(
+      prepared$config$output_dir,
+      "supporting",
+      "msstats_workbook_export_objects.rds"
+    )
+  ),
   identical(timecourse$time_column, "TimePoint"),
   identical(timecourse$group_column, "Infection"),
   identical(timecourse$reference_group, "Control"),

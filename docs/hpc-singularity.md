@@ -125,8 +125,9 @@ shows the latest log tail and generated HTML/XLSX files.
 
 Completed user-facing files are grouped under `results/main/`: both HTML
 reports and the formatted Excel workbook. Supporting main-analysis CSV/RDS/YAML
-files remain directly under `results/`, including the RDS reused by downstream
-stages. Time-course supporting files remain under `results/timecourse/`.
+files are grouped under `results/supporting/`, including the RDS reused by
+downstream stages. Time-course supporting files remain under
+`results/timecourse/`.
 
 ## Run inside an interactive allocation
 
@@ -177,9 +178,10 @@ The protein workbook is optional for model fitting. Supplying it adds the
 description-derived `GN=` gene symbol to the interactive trajectory dashboard.
 
 The Excel and time-course stages reuse
-`results/msstats_workbook_export_objects.rds`. If it does not exist, the
-launcher stops. Add `--with-dependencies` when the main analysis should be
-generated automatically first.
+`results/supporting/msstats_workbook_export_objects.rds`. If it does not exist,
+the launcher also checks the legacy results-root location before stopping. Add
+`--with-dependencies` when the main analysis should be generated automatically
+first.
 
 ## Home-directory isolation
 

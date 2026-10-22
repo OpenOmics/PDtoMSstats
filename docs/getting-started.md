@@ -124,7 +124,7 @@ PDtoMSstats pipeline completed successfully.
 ```
 
 Open `results/example/main/deidentified-example.html` in a web browser. The CSV
-tables are one level up under `results/example/`, and the separate figures are
+tables are under `results/example/supporting/`, and the separate figures are
 under `figures/example`.
 
 The example contains synthetic identifiers and must not be used for biological
@@ -252,11 +252,11 @@ time-course stage unless a second configuration file is supplied.
 The main outputs appear under the configured `results/my-project` folder:
 
 - `main/my-project.html`, the self-contained HTML report;
-- `msstats_all_group_comparisons.csv`;
-- one CSV per planned comparison;
-- a plain-language contrast guide;
-- power and GSEA tables when applicable;
-- an RDS object used by optional downstream stages.
+- `supporting/msstats_all_group_comparisons.csv`;
+- one comparison CSV under `supporting/` per planned comparison;
+- a plain-language contrast guide under `supporting/`;
+- power and GSEA tables under `supporting/` when applicable;
+- a supporting RDS object used by optional downstream stages.
 
 Figures also appear in the configured `figures/my-project` folder.
 

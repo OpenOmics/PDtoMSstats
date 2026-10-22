@@ -44,9 +44,9 @@ docker compose run --rm pdtomsstats \
 The main outputs include:
 
 - `results/example/main/deidentified-example.html`;
-- `results/example/msstats_all_group_comparisons.csv`;
+- `results/example/supporting/msstats_all_group_comparisons.csv`;
 - one CSV for each planned comparison;
-- `results/example/msstats_workbook_export_objects.rds`.
+- `results/example/supporting/msstats_workbook_export_objects.rds`.
 
 The time-course outputs include:
 

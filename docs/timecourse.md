@@ -38,7 +38,7 @@ The annotation saved by the main report must contain:
 Copy `config/timecourse-example.yml` and set:
 
 ```yaml
-analysis_file: "results/my-project/msstats_workbook_export_objects.rds"
+analysis_file: "results/my-project/supporting/msstats_workbook_export_objects.rds"
 time_column: "Time"
 group_column: "Group"
 reference_group: "Reference"

@@ -75,8 +75,8 @@ Run the bundled de-identified example with one noninteractive command:
 ```
 
 Both HTML reports appear under `results/example/main/`. Supporting main-analysis
-files remain directly under `results/example/`, time-course CSV/RDS files stay
-under `results/example/timecourse/`, and figures are written under
+files are grouped under `results/example/supporting/`, time-course CSV/RDS files
+stay under `results/example/timecourse/`, and figures are written under
 `figures/example/`. The example contains synthetic identifiers and is intended
 only to verify the software.
 

@@ -26,7 +26,7 @@ Common options:
   --psm FILE                         PSM XLS/XLSX/CSV/TSV/TXT file
   --annotation FILE                  Annotation XLS/XLSX/CSV/TSV/TXT file
   --outputs LIST                     html, excel, timecourse, or all
-  --output-dir DIR                   Main results directory
+  --output-dir DIR                   Results root for main/supporting outputs
   --request NAME                     Filesystem-safe project name
   --label TEXT                       Human-readable report title
   --condition-columns A,B            Annotation columns that define Condition
@@ -167,6 +167,12 @@ if (pdt_is_set(excel_output)) {
   excel_output <- pdt_resolve_path(excel_output, project_root, must_work = FALSE)
 }
 
+supporting_output_dir <- pdt_supporting_output_dir(main_config$output_dir)
+analysis_file <- pdt_analysis_object_file(
+  main_config$output_dir,
+  refresh = "html" %in% outputs
+)
+
 timecourse_config <- NULL
 if ("timecourse" %in% outputs) {
   timecourse_config <- pdt_prepare_timecourse_config(
@@ -175,6 +181,7 @@ if ("timecourse" %in% outputs) {
     parsed$options,
     parsed$provided,
     project_root,
+    analysis_file = analysis_file,
     interactive_allowed = interactive_allowed
   )
   if (!pdt_is_set(protein_workbook) &&
@@ -185,9 +192,8 @@ if ("timecourse" %in% outputs) {
 
 dir.create(main_config$output_dir, recursive = TRUE, showWarnings = FALSE)
 main_output_dir <- pdt_main_output_dir(main_config$output_dir)
-if (any(c("html", "excel") %in% outputs)) {
-  dir.create(main_output_dir, recursive = TRUE, showWarnings = FALSE)
-}
+dir.create(main_output_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(supporting_output_dir, recursive = TRUE, showWarnings = FALSE)
 main_html_output <- if ("html" %in% outputs) {
   file.path(main_output_dir, paste0(main_config$request, ".html"))
 } else {
@@ -209,7 +215,7 @@ workbook_file <- if ("excel" %in% outputs) {
 }
 main_config_file <- pdt_write_config(
   main_config,
-  file.path(main_config$output_dir, "pdtomsstats-resolved.yml")
+  file.path(supporting_output_dir, "pdtomsstats-resolved.yml")
 )
 timecourse_config_file <- NULL
 if (!is.null(timecourse_config)) {
@@ -220,9 +226,6 @@ if (!is.null(timecourse_config)) {
   )
 }
 
-analysis_file <- file.path(
-  main_config$output_dir, "msstats_workbook_export_objects.rds"
-)
 main_analysis_plan <- pdt_plan_main_analysis(
   outputs,
   analysis_file,
@@ -243,6 +246,7 @@ run_manifest <- list(
   main_analysis_action = main_analysis_action,
   analysis_file = analysis_file,
   main_output_dir = main_output_dir,
+  supporting_output_dir = supporting_output_dir,
   main_html_output = main_html_output,
   timecourse_html_output = timecourse_html_output,
   main_config = main_config_file,
@@ -259,7 +263,7 @@ run_manifest <- list(
 )
 manifest_file <- pdt_write_config(
   run_manifest,
-  file.path(main_config$output_dir, "pdtomsstats-run.yml")
+  file.path(supporting_output_dir, "pdtomsstats-run.yml")
 )
 
 cat("Resolved main configuration: ", main_config_file, "\n", sep = "")

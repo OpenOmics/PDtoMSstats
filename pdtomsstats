@@ -207,6 +207,7 @@ apply_group_permissions() {
   local project_dir=$1 profile_file=${2:-} group=""
   [[ -n "$profile_file" ]] && group=$(yaml_value "$profile_file" group)
   chmod 2770 "$project_dir" "$project_dir"/{config,data,logs,results,tmp,.pdtomsstats} 2>/dev/null || true
+  find "$project_dir/results" -type d -exec chmod 2770 {} + 2>/dev/null || true
   if [[ -n "$group" && "$group" != null ]]; then
     if chgrp -R "$group" "$project_dir" 2>/dev/null; then
       chmod -R g+rwX,o-rwx "$project_dir" 2>/dev/null || true
@@ -261,6 +262,10 @@ command_init() {
   request=$(slug "$request")
   [[ -n "$label" ]] || label=$request
   mkdir -p "$project_dir"/{config,data,logs,results,tmp,.pdtomsstats}
+  mkdir -p "$project_dir"/results/{main,figures,supporting}
+  if [[ ",$modules," == *,timecourse,* ]]; then
+    mkdir -p "$project_dir/results/timecourse"
+  fi
   local profile_file="" main_config timecourse_config=""
   profile_file=$(resolve_profile "$profile_name" "$project_dir")
   main_config="$project_dir/config/$request-main.yml"

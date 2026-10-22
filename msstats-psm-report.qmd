@@ -192,7 +192,9 @@ annotation_file <- normalizePath(
   winslash = "/",
   mustWork = TRUE
 )
-output_dir <- resolve_path(params$output_dir)
+results_dir <- resolve_path(params$output_dir)
+dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
+output_dir <- file.path(results_dir, "supporting")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 read_psm_n_max <- if (is.null(params$max_psm_rows)) Inf else params$max_psm_rows
 differential_pvalue_cutoff <- if (

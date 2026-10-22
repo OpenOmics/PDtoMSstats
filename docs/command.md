@@ -69,14 +69,15 @@ requested outputs depend on them.
 
 The main and time-course HTML reports and default formatted workbook are
 grouped under the configured results directory's `main/` subdirectory.
-Supporting main-analysis CSV/RDS/YAML files remain in the results root, and
-time-course supporting files remain under `timecourse/`.
+Supporting main-analysis CSV/RDS/YAML files are grouped under `supporting/`,
+and time-course supporting files remain under `timecourse/`.
 
 When `html` is requested, the main analysis runs and refreshes its report and
 analysis RDS. An `excel`-only or `timecourse`-only run reuses the existing
-`msstats_workbook_export_objects.rds`; it does not silently rerun the main
-analysis. If that file is absent, first run `--outputs html`, or explicitly add
-`--with-dependencies` to create the missing prerequisite.
+`supporting/msstats_workbook_export_objects.rds`; it does not silently rerun
+the main analysis. If that file is absent, first run `--outputs html`, or
+explicitly add `--with-dependencies` to create the missing prerequisite. Files
+in the legacy results-root location remain usable.
 
 ```bash
 ./pdtomsstats run \
@@ -250,11 +251,13 @@ the normal command excessively long.
 
 ## Resolved configuration and dry runs
 
-Every run saves:
+Every run saves the following under `supporting/`:
 
 - `pdtomsstats-resolved.yml`;
-- `pdtomsstats-run.yml`;
-- `pdtomsstats-timecourse-resolved.yml` when time course is requested.
+- `pdtomsstats-run.yml`.
+
+The time-course resolved configuration remains under `timecourse/` when that
+output is requested.
 
 These files record detected columns and all final settings. Test the choices
 without running MSstats by adding `--dry-run`. Add `--non-interactive` in batch
