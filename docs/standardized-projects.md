@@ -143,6 +143,16 @@ An explicit `--excel-output` path is still honored instead of the default
 A project can submit several separate analyses without a TSV manifest or a
 shell loop. Give each PSM/protein pair a shared analysis ID:
 
+```bash
+"$PDT" init --project "$PROJECT" --profile biowulf \
+  --modules main,timecourse --batch --label "My batch project"
+```
+
+`init --batch` creates only the project-level directories. It does not create
+the single-analysis YAML/contrast templates or empty `results/main`,
+`results/supporting`, `results/figures`, and `results/timecourse` directories.
+Each discovered analysis creates its own complete result tree when it runs.
+
 ```text
 data/
 ├── annotation.xlsx

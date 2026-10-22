@@ -136,6 +136,15 @@ For a project containing independent datasets, name each input pair
 `<analysis-id>__proteins.xlsx`. PSM input may be XLSX, XLS, TXT, TSV, or CSV;
 role suffixes and extensions are case-insensitive. Put one shared annotation
 at `$PROJECT/data/annotation.xlsx`.
+
+For a fresh batch project, initialize without unused single-analysis result
+folders or configuration templates:
+
+```bash
+"$PDT" init --project "$PROJECT" --profile biowulf \
+  --modules main,timecourse --batch --label "My batch project"
+```
+
 For example:
 
 ```text

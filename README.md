@@ -123,8 +123,15 @@ PSM extensions may be XLSX, XLS, TXT, TSV, or CSV. Role suffixes and extensions
 are case-insensitive, and `protein` or `proteins` is accepted:
 
 ```bash
+"$PDT" init --project "$PROJECT" --profile biowulf \
+  --modules main,timecourse --batch --label "My batch project"
+
 "$PDT" run --project "$PROJECT" --batch --outputs html,excel
 ```
+
+Batch initialization creates the project-level `data`, `config`, `results`,
+`logs`, and `tmp` directories but waits for each discovered analysis to create
+its own result tree. It does not create unused single-analysis YAML templates.
 
 The launcher validates every pair before submitting one Slurm job per analysis.
 It keeps all job IDs in a batch record, which the normal `status` command

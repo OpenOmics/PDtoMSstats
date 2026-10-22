@@ -17,7 +17,7 @@ usage() {
 PDtoMSstats: standardized proteomics workflow launcher
 
 Usage:
-  pdtomsstats init --project DIR [--profile PROFILE] [--modules LIST]
+  pdtomsstats init --project DIR [--profile PROFILE] [--modules LIST] [--batch]
   pdtomsstats validate [launcher options] [analysis options]
   pdtomsstats run [launcher options] [analysis options]
   pdtomsstats submit [launcher options] [Slurm options] [analysis options]
@@ -26,7 +26,7 @@ Usage:
   pdtomsstats help
 
 Commands:
-  init       Create data/config/results/logs/tmp and editable YAML templates.
+  init       Create a standardized project and, unless batch, YAML templates.
   validate   Resolve and validate configuration without running an analysis.
   run        Run now with Docker, or with the selected Apptainer profile.
   submit     Generate a reproducible Slurm script and submit it with sbatch.
@@ -46,6 +46,8 @@ Launcher options:
 
 Initialization options:
   --modules LIST      main or main,timecourse (default: main).
+  --batch             Initialize for filename-discovered independent analyses;
+                      omit unused single-analysis templates/output folders.
   --request NAME      Filesystem-safe request name (default: project basename).
   --label TEXT        Report label (default: request name).
   --force             Replace existing generated templates.
@@ -237,11 +239,12 @@ write_last_operation() {
 
 write_project_metadata() {
   local destination=$1 project_dir=$2 request=$3 profile=$4 modules=$5
-  local main_config=$6 timecourse_config=$7
+  local main_config=$6 timecourse_config=$7 batch=${8:-false}
   {
     printf 'schema_version: 1\nproject_dir: "%s"\nrequest: "%s"\n' "$(yaml_escape "$project_dir")" "$(yaml_escape "$request")"
     [[ -n "$profile" ]] && printf 'profile: "%s"\n' "$(yaml_escape "$profile")" || printf 'profile: null\n'
-    printf 'modules: "%s"\nmain_config: "%s"\n' "$(yaml_escape "$modules")" "$(yaml_escape "$main_config")"
+    printf 'modules: "%s"\nbatch: %s\n' "$(yaml_escape "$modules")" "$batch"
+    [[ -n "$main_config" ]] && printf 'main_config: "%s"\n' "$(yaml_escape "$main_config")" || printf 'main_config: null\n'
     [[ -n "$timecourse_config" ]] && printf 'timecourse_config: "%s"\n' "$(yaml_escape "$timecourse_config")" || printf 'timecourse_config: null\n'
   } > "$destination"
   chmod 0660 "$destination" 2>/dev/null || true
@@ -270,6 +273,7 @@ apply_group_permissions() {
 
 command_init() {
   local project_dir="" profile_name="" modules="" request="" label="" force=false
+  local batch=false batch_requested=false
   while (($#)); do
     case "$1" in
       --project) [[ $# -ge 2 ]] || die "--project requires a directory"; project_dir=$2; shift 2 ;;
@@ -282,6 +286,7 @@ command_init() {
       --request=*) request=${1#*=}; shift ;;
       --label) [[ $# -ge 2 ]] || die "--label requires text"; label=$2; shift 2 ;;
       --label=*) label=${1#*=}; shift ;;
+      --batch) batch=true; batch_requested=true; shift ;;
       --force) force=true; shift ;;
       -h|--help) usage; return ;;
       *) die "unknown init option: $1" ;;
@@ -296,6 +301,11 @@ command_init() {
     [[ "$profile_name" != null ]] || profile_name=""
     [[ -n "$modules" ]] || modules=$(yaml_value "$metadata" modules)
     [[ -n "$request" ]] || request=$(yaml_value "$metadata" request)
+    if [[ "$batch_requested" != true ]]; then
+      local stored_batch
+      stored_batch=$(yaml_value "$metadata" batch)
+      [[ "$stored_batch" != true ]] || batch=true
+    fi
   fi
   [[ -n "$modules" && "$modules" != null ]] || modules=main
   [[ ",$modules," == *,main,* ]] || die "--modules must include main"
@@ -306,24 +316,33 @@ command_init() {
   request=$(slug "$request")
   [[ -n "$label" ]] || label=$request
   mkdir -p "$project_dir"/{config,data,logs,results,tmp,.pdtomsstats}
-  mkdir -p "$project_dir"/results/{main,figures,supporting}
-  if [[ ",$modules," == *,timecourse,* ]]; then
-    mkdir -p "$project_dir/results/timecourse"
-  fi
   local profile_file="" main_config timecourse_config=""
   profile_file=$(resolve_profile "$profile_name" "$project_dir")
-  main_config="$project_dir/config/$request-main.yml"
-  render_template "$LAUNCHER_DIR/config/templates/main.yml" "$main_config" "$project_dir" "$request" "$label" "$force"
-  render_template "$LAUNCHER_DIR/config/templates/contrasts.tsv" "$project_dir/config/$request-contrasts.tsv" "$project_dir" "$request" "$label" "$force"
-  if [[ ",$modules," == *,timecourse,* ]]; then
-    timecourse_config="$project_dir/config/$request-timecourse.yml"
-    render_template "$LAUNCHER_DIR/config/templates/timecourse.yml" "$timecourse_config" "$project_dir" "$request" "$label" "$force"
+  main_config=""
+  if [[ "$batch" != true ]]; then
+    mkdir -p "$project_dir"/results/{main,figures,supporting}
+    if [[ ",$modules," == *,timecourse,* ]]; then
+      mkdir -p "$project_dir/results/timecourse"
+    fi
+    main_config="$project_dir/config/$request-main.yml"
+    render_template "$LAUNCHER_DIR/config/templates/main.yml" "$main_config" "$project_dir" "$request" "$label" "$force"
+    render_template "$LAUNCHER_DIR/config/templates/contrasts.tsv" "$project_dir/config/$request-contrasts.tsv" "$project_dir" "$request" "$label" "$force"
+    if [[ ",$modules," == *,timecourse,* ]]; then
+      timecourse_config="$project_dir/config/$request-timecourse.yml"
+      render_template "$LAUNCHER_DIR/config/templates/timecourse.yml" "$timecourse_config" "$project_dir" "$request" "$label" "$force"
+    fi
   fi
-  write_project_metadata "$project_dir/.pdtomsstats/project.yml" "$project_dir" "$request" "$profile_name" "$modules" "$main_config" "$timecourse_config"
+  write_project_metadata "$project_dir/.pdtomsstats/project.yml" "$project_dir" "$request" "$profile_name" "$modules" "$main_config" "$timecourse_config" "$batch"
   apply_group_permissions "$project_dir" "$profile_file"
-  printf '\nPDtoMSstats project initialized.\nProject: %s\nMain configuration: %s\n' "$project_dir" "$main_config"
-  [[ -z "$timecourse_config" ]] || printf 'Time-course configuration: %s\n' "$timecourse_config"
-  printf 'Next: edit the YAML file(s), then validate the project.\n'
+  printf '\nPDtoMSstats project initialized.\nProject: %s\n' "$project_dir"
+  if [[ "$batch" == true ]]; then
+    printf 'Mode: batch\n'
+    printf 'Next: add conventionally named inputs, then validate with --batch.\n'
+  else
+    printf 'Main configuration: %s\n' "$main_config"
+    [[ -z "$timecourse_config" ]] || printf 'Time-course configuration: %s\n' "$timecourse_config"
+    printf 'Next: edit the YAML file(s), then validate the project.\n'
+  fi
 }
 
 prepare_docker() {

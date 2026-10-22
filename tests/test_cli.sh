@@ -35,6 +35,7 @@ grep -q 'request: "group-project"' "$project/config/group-project-main.yml"
 grep -q 'report_label: "Group project"' "$project/config/group-project-main.yml"
 grep -q "output_dir: \"$project/results\"" "$project/config/group-project-main.yml"
 grep -q 'modules: "main,timecourse"' "$project/.pdtomsstats/project.yml"
+grep -q '^batch: false$' "$project/.pdtomsstats/project.yml"
 
 printf '\n# keep-me\n' >> "$project/config/group-project-main.yml"
 "$repo_root/pdtomsstats" init \
@@ -47,6 +48,31 @@ if grep -q '# keep-me' "$project/config/group-project-main.yml"; then
   echo "--force did not replace the generated template" >&2
   exit 1
 fi
+
+# Batch initialization creates only project-level directories. Per-analysis
+# result trees are created when discovered analyses run, and unused
+# single-analysis YAML/contrast templates are not emitted.
+batch_init_project="$test_root/batch-init-project"
+"$repo_root/pdtomsstats" init \
+  --project "$batch_init_project" \
+  --modules main,timecourse \
+  --request batch-init-project \
+  --batch >/dev/null
+for directory in config data logs results tmp .pdtomsstats; do
+  test -d "$batch_init_project/$directory"
+done
+test -z "$(find "$batch_init_project/results" -mindepth 1 -print -quit)"
+test -z "$(find "$batch_init_project/config" -mindepth 1 -print -quit)"
+grep -q '^batch: true$' "$batch_init_project/.pdtomsstats/project.yml"
+grep -q '^main_config: null$' "$batch_init_project/.pdtomsstats/project.yml"
+grep -q '^timecourse_config: null$' "$batch_init_project/.pdtomsstats/project.yml"
+
+# Reinitializing preserves the stored batch mode without requiring --batch.
+"$repo_root/pdtomsstats" init \
+  --project "$batch_init_project" \
+  --modules main,timecourse >/dev/null
+test -z "$(find "$batch_init_project/results" -mindepth 1 -print -quit)"
+test -z "$(find "$batch_init_project/config" -mindepth 1 -print -quit)"
 
 # Exercise command construction without requiring Apptainer in CI.
 fake_runtime="$test_root/fake-apptainer"

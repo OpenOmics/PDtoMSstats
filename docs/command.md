@@ -78,6 +78,16 @@ Use `--batch` when one project contains several independent PSM analyses. No
 batch manifest or shell loop is needed. Files in the project's `data/`
 directory define the analyses:
 
+```bash
+./pdtomsstats init --project /path/to/project \
+  --modules main,timecourse --batch --label "My batch project"
+```
+
+This batch-aware initialization creates the common project directories but no
+single-analysis configuration templates or result subdirectories. Those are
+unnecessary because discovery supplies each analysis's paths and creates
+`results/<analysis-id>/` when the analysis runs.
+
 ```text
 data/
 ├── annotation.xlsx

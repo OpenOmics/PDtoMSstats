@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added batch-aware project initialization. `init --batch` omits unused
+  single-analysis YAML/contrast templates and leaves the results root empty
+  until per-analysis result trees are created during batch execution.
 - Added convention-based batch discovery for projects with multiple independent
   analyses. The launcher validates all `<analysis-id>__psm.xlsx` inputs first,
   pairs optional protein/annotation/contrast files, submits one Slurm job per
