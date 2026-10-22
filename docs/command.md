@@ -91,10 +91,14 @@ data/
 └── tmes-il13__protein.xlsx
 ```
 
-The exact convention is `<analysis-id>__psm.xlsx` and
-`<analysis-id>__protein.xlsx`. The double underscore separates the analysis ID
-from its file role. Role names and the `.xlsx` extension are lowercase. An
-analysis ID may contain letters, numbers, periods, hyphens, and underscores.
+The convention is `<analysis-id>__PSM.xlsx` plus either
+`<analysis-id>__protein.xlsx` or `<analysis-id>__proteins.xlsx`. The double
+underscore separates the analysis ID from its file role. `PSM`, `protein` or
+`proteins`, and the `.xlsx` extension are case-insensitive, so lowercase and
+uppercase Proteome Discoverer names both work. An analysis ID may contain
+letters, numbers, periods, hyphens, and underscores. If both a singular and
+plural protein file match one analysis, validation stops instead of choosing
+one silently.
 
 `annotation.xlsx` is shared by default. An optional
 `<analysis-id>__annotation.xlsx` overrides it for one analysis. The same rule

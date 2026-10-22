@@ -156,15 +156,19 @@ data/
 └── tmes-il13__protein.xlsx
 ```
 
-The filename convention is strict and case-sensitive:
+The filename pairing convention is strict, but role suffix capitalization is
+flexible:
 
-- `<analysis-id>__psm.xlsx` defines an independent analysis;
-- `<analysis-id>__protein.xlsx` is its matching workbook source and is required
-  when `excel` is requested;
+- `<analysis-id>__PSM.xlsx` defines an independent analysis;
+- `<analysis-id>__protein.xlsx` or `<analysis-id>__proteins.xlsx` is its
+  matching workbook source and is required when `excel` is requested;
 - `annotation.xlsx` is shared by all analyses;
 - `<analysis-id>__annotation.xlsx` optionally overrides the shared annotation;
 - `contrasts.tsv` is an optional shared contrast definition;
 - `<analysis-id>__contrasts.tsv` optionally overrides shared contrasts.
+
+The `PSM`, `protein`/`proteins`, and `.xlsx` portions are case-insensitive.
+Ambiguous duplicate protein matches are rejected.
 
 Validate the discovered set first when reviewing a new project:
 

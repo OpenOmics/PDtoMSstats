@@ -66,8 +66,8 @@ Analysis output selection:
   --with-dependencies               Build a missing main-analysis RDS first.
 
 Batch input convention:
-  <analysis-id>__psm.xlsx           Statistical input for one analysis.
-  <analysis-id>__protein.xlsx       Matching formatted-workbook source.
+  <analysis-id>__PSM.xlsx           Statistical input; role is case-insensitive.
+  <analysis-id>__protein.xlsx       Matching source; protein(s), any case.
   annotation.xlsx                   Shared annotation for all analyses.
   <analysis-id>__annotation.xlsx    Optional per-analysis annotation override.
 
@@ -128,6 +128,18 @@ slug() {
   while [[ "$value" == *- ]]; do value=${value%-}; done
   [[ -n "$value" ]] || value=pdtomsstats-analysis
   printf '%s\n' "$value"
+}
+
+batch_analysis_id() {
+  local filename=$1 role=$2 lower suffix=""
+  lower=$(printf '%s' "$filename" | tr '[:upper:]' '[:lower:]')
+  case "$role:$lower" in
+    psm:*__psm.xlsx) suffix=__psm.xlsx ;;
+    protein:*__proteins.xlsx) suffix=__proteins.xlsx ;;
+    protein:*__protein.xlsx) suffix=__protein.xlsx ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "${filename:0:$((${#filename} - ${#suffix}))}"
 }
 
 sed_escape() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
@@ -535,11 +547,16 @@ command_batch() {
 
   local -a psm_files=() protein_files=()
   shopt -s nullglob
+  shopt -s nocaseglob
   psm_files=("$batch_data_dir"/*__psm.xlsx)
-  protein_files=("$batch_data_dir"/*__protein.xlsx)
+  protein_files=(
+    "$batch_data_dir"/*__protein.xlsx
+    "$batch_data_dir"/*__proteins.xlsx
+  )
+  shopt -u nocaseglob
   shopt -u nullglob
   if ((${#psm_files[@]} == 0)); then
-    die "no batch inputs found in $batch_data_dir (expected <analysis-id>__psm.xlsx)"
+    die "no batch inputs found in $batch_data_dir (expected <analysis-id>__PSM.xlsx; role and extension are case-insensitive)"
   fi
 
   local -a batch_ids=() batch_psms=() batch_proteins=()
@@ -548,7 +565,7 @@ command_batch() {
   local existing_id_lower analysis_id_lower
   for file in "${psm_files[@]}"; do
     filename=$(basename "$file")
-    analysis_id=${filename%__psm.xlsx}
+    analysis_id=$(batch_analysis_id "$filename" psm)
     [[ "$analysis_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || \
       die "invalid batch analysis ID '$analysis_id' in $filename"
     analysis_id_lower=$(printf '%s' "$analysis_id" | tr '[:upper:]' '[:lower:]')
@@ -560,10 +577,26 @@ command_batch() {
       done
     fi
 
-    protein="$batch_data_dir/${analysis_id}__protein.xlsx"
-    if [[ ! -f "$protein" ]]; then
+    protein=""
+    local protein_match_count=0 protein_candidate protein_filename protein_id
+    local protein_id_lower
+    if ((${#protein_files[@]})); then
+      for protein_candidate in "${protein_files[@]}"; do
+        protein_filename=$(basename "$protein_candidate")
+        protein_id=$(batch_analysis_id "$protein_filename" protein)
+        protein_id_lower=$(printf '%s' "$protein_id" | tr '[:upper:]' '[:lower:]')
+        if [[ "$protein_id_lower" == "$analysis_id_lower" ]]; then
+          protein=$protein_candidate
+          protein_match_count=$((protein_match_count + 1))
+        fi
+      done
+    fi
+    if ((protein_match_count > 1)); then
+      die "multiple protein workbooks match analysis $analysis_id; keep only one __protein.xlsx or __proteins.xlsx file"
+    fi
+    if ((protein_match_count == 0)); then
       if [[ "$needs_protein" == true ]]; then
-        die "Excel output requires the matching file: $protein"
+        die "Excel output requires one matching ${analysis_id}__protein.xlsx or ${analysis_id}__proteins.xlsx file"
       fi
       protein=""
     fi
@@ -600,9 +633,17 @@ command_batch() {
   if ((${#protein_files[@]})); then
     for file in "${protein_files[@]}"; do
       filename=$(basename "$file")
-      analysis_id=${filename%__protein.xlsx}
-      [[ -f "$batch_data_dir/${analysis_id}__psm.xlsx" ]] || \
-        die "protein workbook has no matching PSM input: $file"
+      analysis_id=$(batch_analysis_id "$filename" protein)
+      analysis_id_lower=$(printf '%s' "$analysis_id" | tr '[:upper:]' '[:lower:]')
+      local psm_match=false batch_id
+      for batch_id in "${batch_ids[@]}"; do
+        existing_id_lower=$(printf '%s' "$batch_id" | tr '[:upper:]' '[:lower:]')
+        if [[ "$existing_id_lower" == "$analysis_id_lower" ]]; then
+          psm_match=true
+          break
+        fi
+      done
+      [[ "$psm_match" == true ]] || die "protein workbook has no matching PSM input: $file"
     done
   fi
 

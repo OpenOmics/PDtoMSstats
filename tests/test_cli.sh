@@ -141,10 +141,10 @@ PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run --mode slurm \
 # Convention-based batches validate all inputs first, then submit one Slurm
 # job per PSM/protein pair and retain a combined job registry.
 touch "$project/data/annotation.xlsx"
-for analysis in bma-il10 tmes-il13; do
-  touch "$project/data/${analysis}__psm.xlsx"
-  touch "$project/data/${analysis}__protein.xlsx"
-done
+touch "$project/data/bma-il10__PSM.XLSX"
+touch "$project/data/bma-il10__Proteins.XLSX"
+touch "$project/data/tmes-il13__psm.xlsx"
+touch "$project/data/tmes-il13__protein.xlsx"
 sbatch_counter="$test_root/sbatch-counter.txt"
 export PDT_TEST_SBATCH_COUNTER="$sbatch_counter"
 PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run \
@@ -177,7 +177,24 @@ if PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run \
   echo "Batch submission accepted an Excel analysis without a protein workbook" >&2
   exit 1
 fi
-grep -q 'Excel output requires the matching file' "$test_root/missing-pair.out"
+grep -q 'Excel output requires one matching' "$test_root/missing-pair.out"
+
+ambiguous_pair_project="$test_root/ambiguous-pair-project"
+"$repo_root/pdtomsstats" init \
+  --project "$ambiguous_pair_project" --profile "$fake_profile" \
+  --modules main --request ambiguous-pair >/dev/null
+touch "$ambiguous_pair_project/data/annotation.xlsx"
+touch "$ambiguous_pair_project/data/mixed__PSM.xlsx"
+touch "$ambiguous_pair_project/data/mixed__protein.xlsx"
+touch "$ambiguous_pair_project/data/mixed__PROTEINS.XLSX"
+if PATH="$fake_bin:$PATH" "$repo_root/pdtomsstats" run \
+  --project "$ambiguous_pair_project" --batch --outputs html,excel \
+  >"$test_root/ambiguous-pair.out" 2>&1; then
+  echo "Batch submission accepted ambiguous protein workbooks" >&2
+  exit 1
+fi
+grep -q 'multiple protein workbooks match analysis mixed' \
+  "$test_root/ambiguous-pair.out"
 
 # A logical data path and its resolved physical path must both be available
 # inside Apptainer. This models the Biowulf /data -> /vf/users mapping without
