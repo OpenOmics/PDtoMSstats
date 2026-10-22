@@ -8,6 +8,8 @@
   analysis, and records the complete batch for status reporting.
 - Made batch PSM and protein role suffixes case-insensitive and accepted both
   singular `protein` and plural `proteins`, while rejecting ambiguous pairs.
+- Clarified that batch discovery supports one or many independent analyses and
+  documented the YAML-free explicit-input alternative for custom filenames.
 - Grouped the main and time-course HTML reports and default formatted Excel
   workbook under a `main/` subdirectory of the configured results directory
   and grouped main-analysis CSV/RDS/YAML files under `supporting/`, while

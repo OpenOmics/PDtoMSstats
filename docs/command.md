@@ -141,6 +141,59 @@ All shared scientific options—column mappings, filtering, normalization,
 condition construction, thresholds, GSEA, and output selection—remain
 available on the batch command.
 
+Batch mode is not limited to multiple analyses. A project containing only one
+conventionally named pair is discovered and run in exactly the same way:
+
+```text
+data/
+├── annotation.xlsx
+├── experiment__PSM.xlsx
+└── experiment__protein.xlsx
+```
+
+```bash
+./pdtomsstats run --project /path/to/project \
+  --batch --outputs html,excel
+```
+
+This submits one job and writes its outputs under `results/experiment/`.
+
+## Choose batch or explicit inputs
+
+The simplest rule is:
+
+- standard batch filenames, for either one or many independent analyses: use
+  `--batch`; no YAML or contrast TSV editing is required;
+- custom filenames for one analysis: provide the paths directly on the command
+  line, or use the generated YAML when a reusable configuration is preferred;
+- custom filenames for several independent analyses: use separate explicit
+  runs/configurations, or rename the files to the batch convention.
+
+A custom-named single analysis can still avoid YAML:
+
+```bash
+./pdtomsstats run --project /path/to/project \
+  --psm /path/to/project/data/custom-psm-export.xlsx \
+  --annotation /path/to/project/data/custom-sample-map.xlsx \
+  --protein-workbook /path/to/project/data/custom-protein-export.xlsx \
+  --outputs html,excel
+```
+
+For a configuration-driven run, edit the generated main YAML so `psm_file`,
+`annotation_file`, output paths, and any scientific settings are correct. The
+formatted Excel source is currently supplied separately:
+
+```bash
+./pdtomsstats run --project /path/to/project \
+  --config /path/to/project/config/project-main.yml \
+  --protein-workbook /path/to/project/data/custom-protein-export.xlsx \
+  --outputs html,excel
+```
+
+The generated contrast TSV is needed only when explicit comparisons are
+wanted. Set `contrast_file: null` in the YAML to generate all pairwise
+comparisons automatically.
+
 When `html` is requested, the main analysis runs and refreshes its report and
 analysis RDS. An `excel`-only or `timecourse`-only run reuses the existing
 `supporting/msstats_workbook_export_objects.rds`; it does not silently rerun

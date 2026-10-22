@@ -129,6 +129,13 @@ The launcher validates every pair before submitting one Slurm job per analysis.
 It keeps all job IDs in a batch record, which the normal `status` command
 reports together. See [standardized projects](docs/standardized-projects.md#multiple-independent-analyses).
 
+Batch discovery also works when the project contains only one PSM/protein
+pair. When inputs follow the batch naming convention, neither the generated
+main YAML nor contrast TSV needs to be edited. For custom filenames, either
+name the files explicitly with `--psm`, `--annotation`, and
+`--protein-workbook`, or edit the main YAML and supply the protein workbook on
+the command line. See [choosing batch or explicit inputs](docs/command.md#choose-batch-or-explicit-inputs).
+
 ## Analyze a new project
 
 The main report needs:

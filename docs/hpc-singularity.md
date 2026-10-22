@@ -166,6 +166,12 @@ latest batch together:
 See [standardized projects](standardized-projects.md#multiple-independent-analyses)
 for per-analysis annotation and contrast overrides.
 
+Batch discovery also accepts just one conventionally named pair and submits
+one job; the generated YAML and contrast TSV can remain untouched. With custom
+filenames, provide `--psm`, `--annotation`, and `--protein-workbook` explicitly,
+or edit the generated main YAML and pass the protein workbook on the command
+line. See [choose batch or explicit inputs](command.md#choose-batch-or-explicit-inputs).
+
 ## Run inside an interactive allocation
 
 After obtaining an interactive allocation, override the profile default with

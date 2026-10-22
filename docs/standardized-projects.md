@@ -189,6 +189,20 @@ one independent Slurm job per analysis. Outputs are written to
 the latest batch automatically. Use `status --batch` to request the most recent
 batch explicitly after a later single-analysis submission.
 
+The same mode works for a project containing only one independent PSM/protein
+pair. With `annotation.xlsx`, `experiment__PSM.xlsx`, and
+`experiment__protein.xlsx` under `data/`, `run --batch` submits one job and
+writes `results/experiment/`. The generated main YAML and contrast TSV do not
+need to be edited for conventionally named batch inputs.
+
+Custom filenames do not force YAML use. For one analysis, either supply
+`--psm`, `--annotation`, and `--protein-workbook` directly, or edit the
+generated main YAML and pass `--protein-workbook` with the run command. For
+several custom-named independent analyses, use separate explicit
+runs/configurations or rename them to the batch convention. See
+[choose batch or explicit inputs](command.md#choose-batch-or-explicit-inputs)
+for complete examples.
+
 ## Submit and monitor
 
 ```bash
